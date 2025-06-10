@@ -1,0 +1,108 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+tesseract_engine/venv/
+vapi_agent_forge/backend/venv/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Databases
+*.db
+*.sqlite3
+tesseract.db
+tesseract_engine/tesseract.db
+vapi_agent_forge/backend/database.db
+
+# Environment variables (SECURITY: Never commit API keys)
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Logs
+*.log
+logs/
+*.out
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+
+# Ngrok
+ngrok
+ngrok.exe
+
+# Activation scripts (these are generated)
+activate_venvs.sh
+activate_venvs.bat
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# FastAPI
+.pytest_cache/
+
+# Node modules (if any frontend dependencies are added)
+node_modules/
+
+# Compiled files
+*.pyc
+*.pyo
+
+# API keys and secrets
+*.key
+*.pem
+secrets/
+
+# Test outputs
+test_results/
+test_output/ 
