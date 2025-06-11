@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import ConfigEditor from './ConfigEditor'
 import VapiManager from './VapiManager'
+import VoiceCall from './VoiceCall'
 
 interface ServiceStatus {
   online: boolean
@@ -330,6 +331,18 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
           )}
+        </div>
+
+        {/* Voice Call Section */}
+        <div className="mb-12">
+          <h2 className="text-2xl font-semibold mb-6 flex items-center">
+            📞 Voice Assistant
+          </h2>
+          <VoiceCall 
+            onCallStart={() => console.log('🚀 Voice call started from dashboard')}
+            onCallEnd={() => console.log('🔚 Voice call ended from dashboard')}
+            onTranscript={(transcript) => console.log('📝 Transcript:', transcript)}
+          />
         </div>
 
         {/* Available Tools */}

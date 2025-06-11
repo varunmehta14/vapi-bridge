@@ -32,6 +32,7 @@ app.add_middleware(
 # Environment variable for public server URL (for ngrok)
 PUBLIC_SERVER_URL = os.getenv("PUBLIC_SERVER_URL", "http://localhost:8000")
 VAPI_API_KEY = os.getenv("VAPI_API_KEY", "")
+VAPI_PUBLIC_KEY = os.getenv("VAPI_PUBLIC_KEY", "")
 
 # Load configuration
 def load_config():
@@ -356,6 +357,16 @@ async def catch_all_webhook(request: Request, path: str):
     except:
         print(f"🔍 CATCH-ALL WEBHOOK: /{path} (no JSON data)")
         return {"result": "Caught by catch-all"}
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log all incoming requests to help debug webhook issues"""
+    if request.url.path.startswith("/webhook") or request.url.path.startswith("/api"):
+        print(f"🌐 INCOMING REQUEST: {request.method} {request.url}")
+        print(f"🌐 Headers: {dict(request.headers)}")
+    
+    response = await call_next(request)
+    return response
 
 @app.get("/assistant-config")
 async def get_assistant_config():
@@ -736,15 +747,120 @@ async def get_system_status():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get system status: {str(e)}")
 
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    """Log all incoming requests to help debug webhook issues"""
-    if request.url.path == "/webhook/tool-call":
-        print(f"🌐 WEBHOOK REQUEST: {request.method} {request.url}")
-        print(f"🌐 Headers: {dict(request.headers)}")
-    
-    response = await call_next(request)
-    return response
+@app.get("/vapi/public-key")
+async def get_vapi_public_key():
+    """Get Vapi public key for web SDK"""
+    try:
+        if not VAPI_PUBLIC_KEY:
+            raise HTTPException(status_code=400, detail="VAPI_PUBLIC_KEY not set in environment variables")
+        
+        return {
+            "public_key": VAPI_PUBLIC_KEY,
+            "status": "success"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get public key: {str(e)}")
+
+@app.post("/vapi/assistant/web-optimized")
+async def create_web_optimized_assistant():
+    """Create a Vapi assistant optimized for web calls with inline tools"""
+    try:
+        if not VAPI_API_KEY:
+            raise HTTPException(status_code=400, detail="VAPI_API_KEY not set in environment variables")
+        
+        # Create Vapi-compatible assistant configuration
+        vapi_assistant_config = {
+            "name": "Tesseract Web Assistant",
+            "model": {
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "messages": [{
+                    "role": "system",
+                    "content": "You are a specialized AI assistant for the Tesseract system. Your goal is to accurately trigger the correct tool based on the user's request.\nCRITICAL RULES: 1. If the user's request clearly matches a specific workflow tool like 'triggerFinancialAnalysisWorkflow', ask for any missing parameters and then call that tool. 2. For ALL OTHER requests, including simple questions, greetings, or ambiguous commands, you MUST use the 'processGeneralRequest' tool. Do not try to answer yourself. 3. The user's ID is demo_user_123.\nExample 1: User says \"I need a financial analysis of Tesla\". You should ask clarifying questions for 'analysis_type', then call 'triggerFinancialAnalysisWorkflow'. Example 2: User says \"What's the weather?\" or \"Hello there\". You MUST call 'processGeneralRequest'.\n"
+                }],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "triggerFinancialAnalysisWorkflow",
+                            "description": "Use this specific tool to run a multi-step financial analysis on a company. Requires the company name and the type of analysis.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "user_id": {
+                                        "type": "string",
+                                        "description": "The user's unique ID."
+                                    },
+                                    "company_name": {
+                                        "type": "string",
+                                        "description": "The name of the company to analyze, e.g., 'Tesla Inc'."
+                                    },
+                                    "analysis_type": {
+                                        "type": "string",
+                                        "description": "The type of analysis to run, e.g., 'credit_risk', 'standard_review'."
+                                    }
+                                },
+                                "required": ["user_id", "company_name", "analysis_type"]
+                            }
+                        }
+                    },
+                    {
+                        "type": "function", 
+                        "function": {
+                            "name": "processGeneralRequest",
+                            "description": "A general-purpose tool for all other requests, simple questions, or ambiguous commands that do not fit a specific workflow.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "user_id": {
+                                        "type": "string",
+                                        "description": "The user's unique ID."
+                                    },
+                                    "user_input": {
+                                        "type": "string",
+                                        "description": "The user's full, verbatim request."
+                                    }
+                                },
+                                "required": ["user_id", "user_input"]
+                            }
+                        }
+                    }
+                ]
+            },
+            "voice": {
+                "provider": "playht",
+                "voiceId": "jennifer-playht"
+            },
+            "firstMessage": "Tesseract system online. How can I assist you?",
+            "server": {
+                "url": f"{PUBLIC_SERVER_URL}/webhook/tool-call"
+            }
+        }
+        
+        # Create the assistant via direct API call
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.vapi.ai/assistant",
+                headers={
+                    "Authorization": f"Bearer {VAPI_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json=vapi_assistant_config,
+                timeout=30.0
+            )
+            response.raise_for_status()
+            result = response.json()
+            
+            return {
+                "assistant_id": result["id"],
+                "name": result["name"],
+                "message": "Web-optimized assistant created successfully with inline tools",
+                "status": "success",
+                "assistant": result
+            }
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create web-optimized assistant: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(
