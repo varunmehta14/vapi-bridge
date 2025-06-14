@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import Vapi from '@vapi-ai/web'
 
 interface VoiceCallProps {
@@ -20,7 +20,7 @@ interface CallStatus {
 }
 
 const VoiceCall: React.FC<VoiceCallProps> = ({
-  assistantId = 'e3ee5d86-2fef-43a6-a4e1-07d1cb47bb10', // Default to new web-optimized assistant ID
+  assistantId, // Remove default hardcoded ID
   publicKey, // Will be fetched from backend if not provided
   onCallStart,
   onCallEnd,
@@ -38,6 +38,28 @@ const VoiceCall: React.FC<VoiceCallProps> = ({
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [volumeLevel, setVolumeLevel] = useState(0)
+  const [currentAssistantId, setCurrentAssistantId] = useState<string | null>(null)
+
+  // Add ref to track initialization
+  const isInitialized = useRef(false)
+
+  // Fetch current assistant ID based on configuration
+  const fetchCurrentAssistantId = useCallback(async () => {
+    if (assistantId) return assistantId
+    
+    try {
+      const response = await fetch('http://localhost:8000/vapi/assistant/current')
+      const data = await response.json()
+      if (data.status === 'success') {
+        setCurrentAssistantId(data.assistant_id)
+        return data.assistant_id
+      }
+      throw new Error('Failed to get assistant ID')
+    } catch (error) {
+      console.error('Failed to fetch current assistant ID:', error)
+      throw new Error('Failed to get current assistant ID')
+    }
+  }, [assistantId])
 
   // Fetch public key if not provided
   const fetchPublicKey = useCallback(async () => {
@@ -55,10 +77,15 @@ const VoiceCall: React.FC<VoiceCallProps> = ({
 
   // Initialize Vapi
   const initializeVapi = useCallback(async () => {
+    // Prevent re-initialization
+    if (isInitialized.current || vapi) {
+      return
+    }
+
     try {
-      const key = await fetchPublicKey()
+      const key = publicKey || await fetchPublicKey()
       if (!key) {
-        throw new Error('No Vapi public key available')
+        throw new Error('No public key available')
       }
 
       const vapiInstance = new Vapi(key)
@@ -66,8 +93,13 @@ const VoiceCall: React.FC<VoiceCallProps> = ({
       // Set up event listeners
       vapiInstance.on('call-start', () => {
         console.log('📞 Call started')
-        setCallStatus(prev => ({ ...prev, isActive: true, isConnected: true, status: 'active' }))
-        setError(null)
+        setCallStatus(prev => ({ 
+          ...prev, 
+          isActive: true, 
+          isConnected: true, 
+          status: 'active' 
+        }))
+        setIsLoading(false)
         onCallStart?.()
       })
 
@@ -77,18 +109,18 @@ const VoiceCall: React.FC<VoiceCallProps> = ({
           ...prev, 
           isActive: false, 
           isConnected: false, 
-          status: 'ended',
-          duration: 0 
+          status: 'ended' 
         }))
+        setIsLoading(false)
         onCallEnd?.()
       })
 
       vapiInstance.on('speech-start', () => {
-        console.log('🗣️ Speech started')
+        console.log('🎤 User started speaking')
       })
 
       vapiInstance.on('speech-end', () => {
-        console.log('🤐 Speech ended')
+        console.log('🎤 User stopped speaking')
       })
 
       vapiInstance.on('volume-level', (level: number) => {
@@ -96,16 +128,16 @@ const VoiceCall: React.FC<VoiceCallProps> = ({
       })
 
       vapiInstance.on('message', (message: any) => {
-        console.log('📨 Message received:', message)
+        console.log('💬 Message received:', message)
         
         if (message.type === 'transcript' && message.transcript) {
-          const transcriptEntry = {
+          const newTranscript = {
             role: message.role || 'assistant',
             content: message.transcript,
             timestamp: new Date()
           }
-          setTranscript(prev => [...prev, transcriptEntry])
-          onTranscript?.(transcriptEntry)
+          setTranscript(prev => [...prev, newTranscript])
+          onTranscript?.(newTranscript)
         }
         
         if (message.type === 'function-call') {
@@ -115,8 +147,7 @@ const VoiceCall: React.FC<VoiceCallProps> = ({
 
       vapiInstance.on('error', (error: any) => {
         console.error('❌ Vapi error:', error)
-        setError(error.message || 'An error occurred during the call')
-        setIsLoading(false)
+        setError(error.message || 'An error occurred')
         setCallStatus(prev => ({ 
           ...prev, 
           isActive: false, 
@@ -126,12 +157,13 @@ const VoiceCall: React.FC<VoiceCallProps> = ({
       })
 
       setVapi(vapiInstance)
+      isInitialized.current = true
       console.log('✅ Vapi initialized successfully')
     } catch (error) {
       console.error('Failed to initialize Vapi:', error)
       setError((error as Error).message)
     }
-  }, [fetchPublicKey, onCallStart, onCallEnd, onTranscript])
+  }, [fetchPublicKey, onCallStart, onCallEnd, onTranscript, publicKey, vapi])
 
   // Start call
   const startCall = useCallback(async () => {
@@ -147,17 +179,23 @@ const VoiceCall: React.FC<VoiceCallProps> = ({
     try {
       setCallStatus(prev => ({ ...prev, status: 'connecting' }))
       
-      // Start the call with assistant ID
-      await vapi.start(assistantId)
+      // Get current assistant ID (either provided or fetch dynamic one)
+      const activeAssistantId = currentAssistantId || await fetchCurrentAssistantId()
+      if (!activeAssistantId) {
+        throw new Error('No assistant ID available')
+      }
       
-      console.log('📞 Starting call with assistant:', assistantId)
+      // Start the call with assistant ID
+      await vapi.start(activeAssistantId)
+      
+      console.log('📞 Starting call with dynamic assistant:', activeAssistantId)
     } catch (error) {
       console.error('Failed to start call:', error)
       setError((error as Error).message)
       setIsLoading(false)
       setCallStatus(prev => ({ ...prev, status: 'error' }))
     }
-  }, [vapi, assistantId])
+  }, [vapi, currentAssistantId, fetchCurrentAssistantId])
 
   // Stop call
   const stopCall = useCallback(() => {
@@ -205,10 +243,12 @@ const VoiceCall: React.FC<VoiceCallProps> = ({
     }
   }, [callStatus.isActive])
 
-  // Initialize on mount
+  // Initialize on mount - only once
   useEffect(() => {
-    initializeVapi()
-  }, [initializeVapi])
+    if (!isInitialized.current) {
+      initializeVapi()
+    }
+  }, []) // Empty dependency array to run only once
 
   // Format duration
   const formatDuration = (seconds: number) => {
@@ -341,9 +381,10 @@ const VoiceCall: React.FC<VoiceCallProps> = ({
         <div className="text-sm text-gray-400 bg-white/5 rounded-lg p-4">
           <h4 className="font-medium mb-2">💡 How to use:</h4>
           <ul className="list-disc list-inside space-y-1">
-            <li>Click "Start Voice Call" to begin speaking with the AI assistant</li>
-            <li>The assistant can help with financial analysis and general questions</li>
-            <li>Try saying: "I need a financial analysis of Apple for credit risk"</li>
+            <li>Click "Start Voice Call" to begin speaking with your configured AI assistant</li>
+            <li>The assistant will be created dynamically based on your current YAML configuration</li>
+            <li>For LangGraph Research Assistant, try: "What is artificial intelligence?" or "Research Tesla's latest news"</li>
+            <li>For Tesseract Workflow, try: "I need a financial analysis of Apple for credit risk"</li>
             <li>Use the mute button to control your microphone during the call</li>
           </ul>
         </div>

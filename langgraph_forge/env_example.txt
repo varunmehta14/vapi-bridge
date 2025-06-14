@@ -1,0 +1,33 @@
+# LangGraph Research & Content Assistant Configuration
+
+# Google Gemini API Key (required)
+GOOGLE_API_KEY=AIzaSyD1wnZAgNPnes4CmKyfc6RxQRFlGCWU0ZY
+
+# Tavily API Key (optional - for enhanced web search)
+TAVILY_API_KEY=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
+
+# Database Configuration
+DATABASE_URL=sqlite+aiosqlite:///./langgraph_research.db
+
+# Server Configuration
+PORT=8082
+HOST=0.0.0.0
+
+# Logging Configuration
+LOG_LEVEL=INFO
+
+# Configuration Directory
+CONFIG_DIR=./configs
+
+# Model Configuration
+DEFAULT_MODEL=gemini-pro
+DEFAULT_TEMPERATURE=0.1
+
+# Search Configuration
+MAX_SEARCH_RESULTS=10
+DEFAULT_SEARCH_TIMEOUT=30
+
+# Content Generation Configuration
+MAX_CONTENT_LENGTH=5000
+DEFAULT_CONTENT_TYPE=article
+DEFAULT_TONE=professional 

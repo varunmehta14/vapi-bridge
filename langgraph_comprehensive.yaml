@@ -1,0 +1,182 @@
+assistant:
+  name: "Advanced Research Assistant"
+  model:
+    provider: "google"
+    model: "gemini-1.5-flash"
+    system_prompt_template: |
+      You are an Advanced Research Assistant powered by LangGraph and Google Gemini. You provide comprehensive research and content generation with the following capabilities:
+      
+      **RESEARCH EXCELLENCE:**
+      - Conduct thorough research with multiple sources and cross-referencing
+      - Provide detailed analysis with evidence-based conclusions
+      - Offer both quick answers and deep-dive research options
+      
+      **CONTENT CREATION:**
+      - Generate high-quality content in various formats
+      - Create structured documents, reports, and summaries
+      - Adapt tone and style to specific requirements
+      
+      **INTELLIGENT ASSISTANCE:**
+      - Ask clarifying questions to understand research needs
+      - Suggest related topics and follow-up research
+      - Provide source citations and credibility assessments
+      
+      You can handle both quick voice queries and detailed research requests. Always clarify the depth of research needed.
+
+  voice:
+    provider: "playht"
+    voiceId: "jennifer-playht"
+  
+  firstMessage: "Hello! I'm your Advanced Research Assistant powered by LangGraph and Google Gemini. I can provide both quick answers and comprehensive research on any topic. I can also generate detailed content, reports, and analysis. What would you like to explore today?"
+
+tools:
+  - name: "research_topic"
+    description: "Conduct comprehensive research on any topic with multiple sources and detailed analysis"
+    parameters:
+      type: "object"
+      properties:
+        query:
+          type: "string"
+          description: "Your research question or topic"
+        research_type:
+          type: "string"
+          description: "Type of research to conduct"
+          enum: ["comprehensive", "quick", "academic", "news", "technical"]
+          default: "comprehensive"
+        max_sources:
+          type: "integer"
+          description: "Maximum number of sources to research"
+          minimum: 1
+          maximum: 10
+          default: 5
+        include_summary:
+          type: "boolean"
+          description: "Include executive summary"
+          default: true
+        include_citations:
+          type: "boolean"
+          description: "Include source citations"
+          default: true
+      required: ["query"]
+    action:
+      type: "api_call"
+      method: "POST"
+      url: "https://1193-2603-8000-baf0-4690-14ce-4b1-5d2-9ea7.ngrok-free.app/research"
+      json_body:
+        query: "{query}"
+        research_type: "{research_type}"
+        max_sources: "{max_sources}"
+        include_summary: "{include_summary}"
+        include_citations: "{include_citations}"
+      response_template: "I'll conduct comprehensive research on that topic. This may take 30-60 seconds for thorough analysis..."
+
+  - name: "quick_research"
+    description: "Get immediate research answers for voice calls (2-5 seconds)"
+    parameters:
+      type: "object"
+      properties:
+        query:
+          type: "string"
+          description: "Your research question"
+        max_sources:
+          type: "integer"
+          description: "Maximum sources for quick response"
+          minimum: 1
+          maximum: 3
+          default: 2
+      required: ["query"]
+    action:
+      type: "api_call"
+      method: "POST"
+      url: "https://1193-2603-8000-baf0-4690-14ce-4b1-5d2-9ea7.ngrok-free.app/quick-research"
+      json_body:
+        query: "{query}"
+        research_type: "quick"
+        max_sources: "{max_sources}"
+        include_summary: true
+      response_template: "Let me quickly research that for you..."
+
+  - name: "generate_content"
+    description: "Generate comprehensive content in various formats"
+    parameters:
+      type: "object"
+      properties:
+        topic:
+          type: "string"
+          description: "Content topic"
+        content_type:
+          type: "string"
+          description: "Type of content to generate"
+          enum: ["article", "report", "summary", "outline", "analysis", "presentation", "blog_post"]
+          default: "article"
+        tone:
+          type: "string"
+          description: "Content tone and style"
+          enum: ["professional", "conversational", "academic", "friendly", "technical", "creative"]
+          default: "professional"
+        length:
+          type: "string"
+          description: "Content length"
+          enum: ["short", "medium", "long", "comprehensive"]
+          default: "medium"
+        include_research:
+          type: "boolean"
+          description: "Include research and citations"
+          default: true
+      required: ["topic"]
+    action:
+      type: "api_call"
+      method: "POST"
+      url: "https://1193-2603-8000-baf0-4690-14ce-4b1-5d2-9ea7.ngrok-free.app/generate-content"
+      json_body:
+        topic: "{topic}"
+        content_type: "{content_type}"
+        tone: "{tone}"
+        length: "{length}"
+        include_research: "{include_research}"
+      response_template: "I'll generate comprehensive content on that topic. This will include research and take about 30-60 seconds..."
+
+  - name: "quick_content"
+    description: "Generate brief content quickly for voice delivery"
+    parameters:
+      type: "object"
+      properties:
+        topic:
+          type: "string"
+          description: "Content topic"
+        content_type:
+          type: "string"
+          description: "Type of brief content"
+          enum: ["summary", "key_points", "outline", "brief"]
+          default: "summary"
+        tone:
+          type: "string"
+          description: "Content tone"
+          enum: ["conversational", "professional", "friendly"]
+          default: "conversational"
+      required: ["topic"]
+    action:
+      type: "api_call"
+      method: "POST"
+      url: "https://1193-2603-8000-baf0-4690-14ce-4b1-5d2-9ea7.ngrok-free.app/quick-content"
+      json_body:
+        topic: "{topic}"
+        content_type: "{content_type}"
+        tone: "{tone}"
+        length: "short"
+      response_template: "I'll create that content for you right now..."
+
+  - name: "check_job_status"
+    description: "Check the status of a long-running research or content generation job"
+    parameters:
+      type: "object"
+      properties:
+        job_id:
+          type: "string"
+          description: "The job ID to check"
+      required: ["job_id"]
+    action:
+      type: "api_call"
+      method: "GET"
+      url: "https://1193-2603-8000-baf0-4690-14ce-4b1-5d2-9ea7.ngrok-free.app/job-status/{job_id}"
+      response_template: "Let me check the status of that job..." 

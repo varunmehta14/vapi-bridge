@@ -1,0 +1,101 @@
+assistant:
+  name: "Quick Research Assistant"
+  model:
+    provider: "google"
+    model: "gemini-1.5-flash"
+    system_prompt_template: |
+      You are a Quick Research Assistant powered by LangGraph and Google Gemini. Your responses should be:
+      
+      **CONCISE & IMMEDIATE:**
+      - Provide direct, actionable answers in 2-3 sentences
+      - Focus on the most important information first
+      - Avoid lengthy explanations during voice calls
+      
+      **RESEARCH-FOCUSED:**
+      - Use quick research for immediate voice responses (2-5 seconds)
+      - Provide evidence-based answers with key sources
+      - Offer to do deeper research if needed
+      
+      **VOICE-OPTIMIZED:**
+      - Use conversational language that sounds natural when spoken
+      - Break complex information into digestible chunks
+      - Ask follow-up questions to clarify research needs
+      
+      Always prioritize speed and relevance during voice calls. Start with key findings.
+
+  voice:
+    provider: "playht"
+    voiceId: "jennifer-playht"
+  
+  firstMessage: "Hi! I'm your Quick Research Assistant powered by LangGraph and Google Gemini. I can quickly research any topic and provide immediate answers. What would you like to research?"
+
+tools:
+  - name: "quick_research"
+    description: "Get immediate research answers optimized for voice calls (2-5 second response time)"
+    parameters:
+      type: "object"
+      properties:
+        query:
+          type: "string"
+          description: "Your research question or topic"
+        research_type:
+          type: "string"
+          description: "Always 'quick' for voice calls"
+          enum: ["quick"]
+          default: "quick"
+        max_sources:
+          type: "integer"
+          description: "Maximum 2 sources for quick response"
+          minimum: 1
+          maximum: 2
+          default: 1
+        include_summary:
+          type: "boolean"
+          description: "Always true for voice calls"
+          default: true
+      required: ["query"]
+    action:
+      type: "api_call"
+      method: "POST"
+      url: "https://1193-2603-8000-baf0-4690-14ce-4b1-5d2-9ea7.ngrok-free.app/quick-research"
+      json_body:
+        query: "{query}"
+        research_type: "quick"
+        max_sources: 1
+        include_summary: true
+      response_template: "Let me quickly research that for you..."
+
+  - name: "quick_content"
+    description: "Generate brief content immediately optimized for voice delivery"
+    parameters:
+      type: "object"
+      properties:
+        topic:
+          type: "string"
+          description: "Content topic"
+        content_type:
+          type: "string"
+          description: "Type of content (kept brief for voice)"
+          enum: ["summary", "outline", "key_points", "brief"]
+          default: "summary"
+        tone:
+          type: "string"
+          description: "Content tone"
+          enum: ["conversational", "professional", "friendly"]
+          default: "conversational"
+        length:
+          type: "string"
+          description: "Always short for voice calls"
+          enum: ["short"]
+          default: "short"
+      required: ["topic"]
+    action:
+      type: "api_call"
+      method: "POST"
+      url: "https://1193-2603-8000-baf0-4690-14ce-4b1-5d2-9ea7.ngrok-free.app/quick-content"
+      json_body:
+        topic: "{topic}"
+        content_type: "{content_type}"
+        tone: "{tone}"
+        length: "short"
+      response_template: "I'll create that content for you right now..." 

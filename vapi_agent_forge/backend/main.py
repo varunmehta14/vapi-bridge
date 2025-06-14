@@ -548,6 +548,150 @@ async def update_config_yaml(yaml_data: Dict[str, str]):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"YAML update failed: {str(e)}")
 
+@app.post("/config/validate")
+async def validate_config_yaml(yaml_data: Dict[str, str]):
+    """Validate YAML configuration without saving it"""
+    try:
+        yaml_content = yaml_data.get("yaml", "")
+        if not yaml_content:
+            raise ValueError("No YAML content provided")
+        
+        # Parse YAML to validate syntax
+        try:
+            parsed_config = yaml.safe_load(yaml_content)
+        except yaml.YAMLError as e:
+            return {
+                "success": False,
+                "message": "Invalid YAML syntax",
+                "error": str(e),
+                "suggestions": [
+                    "Check for proper indentation (use spaces, not tabs)",
+                    "Ensure all quotes are properly closed",
+                    "Verify colons are followed by spaces",
+                    "Check for special characters that need escaping"
+                ]
+            }
+        
+        if not parsed_config or not isinstance(parsed_config, dict):
+            return {
+                "success": False,
+                "message": "Invalid configuration structure",
+                "error": "Configuration must be a valid YAML object"
+            }
+        
+        # Extract configuration information
+        config_info = {}
+        validation_results = []
+        warnings = []
+        
+        # Check for assistant section
+        if "assistant" in parsed_config:
+            assistant = parsed_config["assistant"]
+            config_info["name"] = assistant.get("name", "Unnamed Assistant")
+            config_info["hasSystemPrompt"] = bool(
+                assistant.get("system_prompt_template") or 
+                (isinstance(assistant.get("model"), dict) and assistant["model"].get("system_prompt_template"))
+            )
+            config_info["hasFirstMessage"] = bool(assistant.get("firstMessage"))
+            config_info["hasVoice"] = bool(assistant.get("voice"))
+            config_info["modelProvider"] = "unknown"
+            config_info["voiceProvider"] = "unknown"
+            
+            # Extract model provider
+            if isinstance(assistant.get("model"), dict):
+                config_info["modelProvider"] = assistant["model"].get("provider", "unknown")
+            elif isinstance(assistant.get("model"), str):
+                config_info["modelProvider"] = assistant["model"]
+            
+            # Extract voice provider
+            if isinstance(assistant.get("voice"), dict):
+                config_info["voiceProvider"] = assistant["voice"].get("provider", "unknown")
+            
+            validation_results.append("✅ Assistant section found")
+        else:
+            warnings.append("⚠️ No assistant section found")
+        
+        # Check for tools
+        tools = parsed_config.get("tools", [])
+        if isinstance(tools, list):
+            config_info["toolCount"] = len(tools)
+            if len(tools) > 0:
+                validation_results.append(f"✅ Found {len(tools)} tools configured")
+                
+                # Analyze tool types
+                tool_types = []
+                for tool in tools:
+                    if isinstance(tool, dict) and "name" in tool:
+                        tool_name = tool["name"]
+                        if "research" in tool_name.lower() or "generate_content" in tool_name.lower():
+                            tool_types.append("research")
+                        elif "workflow" in tool_name.lower() or "financial" in tool_name.lower():
+                            tool_types.append("workflow")
+                        else:
+                            tool_types.append("custom")
+                
+                if "research" in tool_types:
+                    config_info["agentType"] = "research"
+                    config_info["description"] = "AI-powered research and content generation assistant"
+                elif "workflow" in tool_types:
+                    config_info["agentType"] = "workflow"
+                    config_info["description"] = "Workflow automation and business process assistant"
+                else:
+                    config_info["agentType"] = "custom"
+                    config_info["description"] = f"Custom assistant with {len(tools)} specialized tools"
+            else:
+                warnings.append("⚠️ No tools configured - assistant will have limited functionality")
+                config_info["agentType"] = "unknown"
+                config_info["description"] = "Basic assistant without specialized tools"
+        else:
+            warnings.append("⚠️ Tools section is not a valid list")
+            config_info["toolCount"] = 0
+        
+        # Generate suggestions
+        suggestions = []
+        if not config_info.get("hasSystemPrompt"):
+            suggestions.append("Add a system_prompt_template to define the assistant's behavior")
+        if not config_info.get("hasFirstMessage"):
+            suggestions.append("Add a firstMessage to greet users when they start a conversation")
+        if not config_info.get("hasVoice"):
+            suggestions.append("Configure voice settings for better user experience")
+        if config_info.get("toolCount", 0) == 0:
+            suggestions.append("Add tools to give your assistant specific capabilities")
+        
+        # Check for LangGraph/Research configuration
+        yaml_lower = yaml_content.lower()
+        if "ngrok-free.app" in yaml_content or "8082" in yaml_content:
+            validation_results.append("🔬 LangGraph Research Assistant detected")
+        elif "8081" in yaml_content or "tesseract" in yaml_lower:
+            validation_results.append("🔧 Tesseract Workflow Engine detected")
+        
+        return {
+            "success": True,
+            "message": "Configuration validation successful",
+            "configInfo": config_info,
+            "validation": validation_results,
+            "warnings": warnings,
+            "suggestions": suggestions,
+            "stats": {
+                "lineCount": len(yaml_content.split('\n')),
+                "characterCount": len(yaml_content),
+                "toolCount": config_info.get("toolCount", 0),
+                "hasRequiredFields": config_info.get("hasSystemPrompt", False) and config_info.get("hasFirstMessage", False)
+            }
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "message": "Validation error",
+            "error": str(e),
+            "suggestions": [
+                "Check the YAML syntax and structure",
+                "Ensure all required fields are present",
+                "Verify the configuration follows the expected format"
+            ]
+        }
+
 # =================== VAPI ASSISTANT MANAGEMENT ENDPOINTS ===================
 
 class VapiAssistantRequest(BaseModel):
@@ -861,6 +1005,201 @@ async def create_web_optimized_assistant():
             
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create web-optimized assistant: {str(e)}")
+
+@app.post("/vapi/assistant/dynamic")
+async def create_dynamic_assistant():
+    """Create a Vapi assistant dynamically based on current YAML configuration"""
+    try:
+        if not VAPI_API_KEY:
+            raise HTTPException(status_code=400, detail="VAPI_API_KEY not set in environment variables")
+        
+        # Load current configuration
+        current_config = load_config()
+        assistant_config = current_config["assistant"]
+        tools_config = current_config["tools"]
+        
+        # Convert our YAML tools to Vapi format
+        vapi_tools = []
+        for tool in tools_config:
+            vapi_tool = {
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": tool["parameters"]
+                }
+            }
+            vapi_tools.append(vapi_tool)
+        
+        # Create Vapi assistant configuration
+        vapi_assistant_config = {
+            "name": assistant_config["name"],
+            "model": {
+                "provider": assistant_config["model"]["provider"],
+                "model": assistant_config["model"]["model"],
+                "messages": [{
+                    "role": "system",
+                    "content": assistant_config["model"].get("system_prompt_template", "You are a helpful AI assistant.")
+                }],
+                "tools": vapi_tools
+            },
+            "voice": assistant_config["voice"],
+            "firstMessage": assistant_config["firstMessage"],
+            "server": {
+                "url": f"{PUBLIC_SERVER_URL}/webhook/tool-call"
+            }
+        }
+        
+        # Create the assistant via Vapi API
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.vapi.ai/assistant",
+                headers={
+                    "Authorization": f"Bearer {VAPI_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json=vapi_assistant_config,
+                timeout=30.0
+            )
+            response.raise_for_status()
+            result = response.json()
+            
+            return {
+                "assistant_id": result["id"],
+                "name": result["name"],
+                "message": f"Dynamic assistant created successfully with webhook support",
+                "status": "success",
+                "config_based_on": {
+                    "agent_name": assistant_config["name"],
+                    "tools_count": len(tools_config),
+                    "model_provider": assistant_config["model"]["provider"],
+                    "voice_provider": assistant_config["voice"]["provider"]
+                },
+                "webhook_url": f"{PUBLIC_SERVER_URL}/webhook/tool-call",
+                "assistant": result
+            }
+            
+    except httpx.HTTPError as e:
+        error_detail = f"HTTP error: {str(e)}"
+        if hasattr(e, 'response') and e.response:
+            try:
+                error_data = e.response.json()
+                error_detail = f"Vapi API error: {error_data}"
+            except:
+                error_detail = f"HTTP {e.response.status_code}: {e.response.text}"
+        raise HTTPException(status_code=500, detail=f"Failed to create dynamic assistant: {error_detail}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create dynamic assistant: {str(e)}")
+
+@app.get("/vapi/assistant/current")
+async def get_current_assistant_id():
+    """Get or create the current assistant ID based on configuration"""
+    try:
+        # For now, we'll create a new assistant each time
+        # In production, you might want to cache this or store it
+        result = await create_dynamic_assistant()
+        return {
+            "assistant_id": result["assistant_id"],
+            "status": "success",
+            "message": "Current assistant ready for voice calls"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get current assistant: {str(e)}")
+
+# =================== SERVICE STATUS PROXY ENDPOINTS ===================
+
+@app.get("/service-status/{service_id}")
+async def check_service_status(service_id: str):
+    """Check the status of a specific service by ID"""
+    try:
+        service_configs = {
+            "langgraph": {
+                "url": "https://1193-2603-8000-baf0-4690-14ce-4b1-5d2-9ea7.ngrok-free.app/health",
+                "name": "LangGraph Research Assistant"
+            },
+            "tesseract": {
+                "url": "http://localhost:8081/",
+                "name": "Tesseract Workflow Engine"
+            },
+            "vapi_forge": {
+                "url": "http://localhost:8000/",
+                "name": "Vapi Agent Forge"
+            }
+        }
+        
+        if service_id not in service_configs:
+            raise HTTPException(status_code=404, detail=f"Service '{service_id}' not found")
+        
+        service_config = service_configs[service_id]
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(service_config["url"], timeout=10.0)
+            response.raise_for_status()
+            
+            # Try to parse as JSON, fallback to text
+            try:
+                data = response.json()
+                message = data.get("message") or data.get("status") or "Running"
+            except:
+                message = "Running"
+            
+            return {
+                "service_id": service_id,
+                "name": service_config["name"],
+                "online": True,
+                "message": message,
+                "status": "success"
+            }
+            
+    except httpx.TimeoutException:
+        return {
+            "service_id": service_id,
+            "name": service_configs.get(service_id, {}).get("name", "Unknown Service"),
+            "online": False,
+            "error": "Service timeout - check if service is running",
+            "status": "error"
+        }
+    except httpx.HTTPError as e:
+        return {
+            "service_id": service_id,
+            "name": service_configs.get(service_id, {}).get("name", "Unknown Service"),
+            "online": False,
+            "error": f"HTTP error: {str(e)}",
+            "status": "error"
+        }
+    except Exception as e:
+        return {
+            "service_id": service_id,
+            "name": service_configs.get(service_id, {}).get("name", "Unknown Service"),
+            "online": False,
+            "error": str(e),
+            "status": "error"
+        }
+
+@app.get("/service-status")
+async def check_all_services_status():
+    """Check the status of all known services"""
+    services = ["langgraph", "tesseract", "vapi_forge"]
+    results = {}
+    
+    for service_id in services:
+        try:
+            # Call the individual service status endpoint
+            result = await check_service_status(service_id)
+            results[service_id] = result
+        except Exception as e:
+            results[service_id] = {
+                "service_id": service_id,
+                "online": False,
+                "error": str(e),
+                "status": "error"
+            }
+    
+    return {
+        "services": results,
+        "status": "success",
+        "timestamp": time.strftime('%Y-%m-%d %H:%M:%S')
+    }
 
 if __name__ == "__main__":
     uvicorn.run(

@@ -1,0 +1,116 @@
+assistant:
+  name: "Smart Research Assistant"
+  model:
+    provider: "google"
+    model: "gemini-1.5-flash"
+    system_prompt_template: |
+      You are an intelligent Research & Content Assistant powered by advanced LangGraph workflows and Google Gemini AI.
+
+      Your core capabilities include:
+      
+      **Research & Analysis:**
+      - Conduct comprehensive research using multiple sources (web search, Wikipedia, academic sources)
+      - Analyze and synthesize information from various perspectives
+      - Provide evidence-based answers with proper citations
+      - Generate detailed research reports and summaries
+      
+      **Content Creation:**
+      - Create high-quality articles, blog posts, and reports
+      - Generate marketing copy and social media content
+      - Adapt tone and style to specific audiences
+      - Produce structured, engaging, and informative content
+      
+      **Information Processing:**
+      - Summarize complex documents and research papers
+      - Extract key insights and actionable recommendations
+      - Compare and contrast different viewpoints
+      - Identify trends and patterns in data
+
+      **Interaction Guidelines:**
+      - Always use the appropriate tool (research_topic or generate_content) for user requests
+      - Provide comprehensive, accurate, and well-sourced information
+      - Tailor responses to the user's specific needs and expertise level
+      - Be proactive in suggesting related topics or follow-up questions
+      - Maintain a professional yet approachable tone
+      - Leverage Google Gemini's advanced reasoning and multimodal capabilities
+
+      When users ask for research, use research_topic with appropriate parameters.
+      When users need content creation, use generate_content with the right specifications.
+      Always explain what you're doing and what they can expect from the process.
+
+  voice:
+    provider: "playht"
+    voiceId: "jennifer-playht"
+  
+  firstMessage: "Hello! I'm your Smart Research Assistant powered by Google Gemini. I can help you research any topic thoroughly, generate high-quality content, and provide detailed analysis on complex subjects. Whether you need market research, academic insights, content creation, or just want to explore a topic in depth, I'm here to help with Google's most advanced AI. What would you like to research or create today?"
+
+tools:
+  - name: "research_topic"
+    description: "Conduct comprehensive research on any topic using multiple authoritative sources including web search, Wikipedia, and academic databases. Perfect for gathering information, fact-checking, trend analysis, and creating detailed research reports."
+    parameters:
+      type: "object"
+      properties:
+        query:
+          type: "string"
+          description: "The research query, topic, or question you want to investigate"
+        research_type:
+          type: "string"
+          description: "Type of research to conduct"
+          enum: ["comprehensive", "quick", "deep"]
+          default: "comprehensive"
+        max_sources:
+          type: "integer"
+          description: "Maximum number of sources to research (1-10)"
+          minimum: 1
+          maximum: 10
+          default: 5
+        include_summary:
+          type: "boolean"
+          description: "Whether to include a comprehensive summary of findings"
+          default: true
+      required: ["query"]
+    action:
+      type: "api_call"
+      method: "POST"
+      url: "https://1193-2603-8000-baf0-4690-14ce-4b1-5d2-9ea7.ngrok-free.app/research"
+      json_body:
+        query: "{query}"
+        research_type: "{research_type}"
+        max_sources: "{max_sources}"
+        include_summary: "{include_summary}"
+      response_template: "🔍 Research initiated for: '{query}'. I'm analyzing multiple sources using Google Gemini to provide comprehensive insights. This will take 30-60 seconds. Job ID: {job_id}"
+
+  - name: "generate_content"
+    description: "Generate high-quality, engaging content including articles, blog posts, reports, marketing copy, social media content, and more. Uses research-backed information and adapts to your specified tone and audience."
+    parameters:
+      type: "object"
+      properties:
+        topic:
+          type: "string"
+          description: "The main topic or subject for content generation"
+        content_type:
+          type: "string"
+          description: "Type of content to generate"
+          enum: ["article", "blog", "report", "summary", "marketing", "social", "email", "script", "guide"]
+          default: "article"
+        tone:
+          type: "string"
+          description: "Tone and style of the content"
+          enum: ["professional", "casual", "academic", "creative", "persuasive", "friendly", "technical", "conversational"]
+          default: "professional"
+        length:
+          type: "string"
+          description: "Desired length of the content"
+          enum: ["short", "medium", "long"]
+          default: "medium"
+      required: ["topic"]
+    action:
+      type: "api_call"
+      method: "POST"
+      url: "https://1193-2603-8000-baf0-4690-14ce-4b1-5d2-9ea7.ngrok-free.app/generate-content"
+      json_body:
+        topic: "{topic}"
+        content_type: "{content_type}"
+        tone: "{tone}"
+        length: "{length}"
+      response_template: "✍️ Content creation started for: '{topic}'. I'm crafting engaging {content_type} content with a {tone} tone using Google Gemini's advanced capabilities. This will take 20-40 seconds. Job ID: {job_id}" 
