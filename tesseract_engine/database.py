@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 import json
 import logging
-from .database_config import db_config
+from database_config import db_config
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -83,8 +83,8 @@ class DatabaseManager:
                 logger.error(f"Failed to get workflow {workflow_name}: {str(e)}")
                 raise
     
-    def create_job(self, job_id: str, workflow_name: str, user_id: str, input_params: Dict[str, Any]) -> Job:
-        """Create a new job entry"""
+    def create_job(self, job_id: str, workflow_name: str, user_id: str, input_params: Dict[str, Any]) -> dict:
+        """Create a new job entry and return its data as a dict"""
         with db_config.get_db_session() as db:
             try:
                 job = Job(
@@ -96,9 +96,15 @@ class DatabaseManager:
                 )
                 db.add(job)
                 db.commit()
-                db.refresh(job)
-                logger.info(f"Created new job {job_id} for workflow {workflow_name}")
-                return job
+                # Access all needed fields before session closes
+                job_data = {
+                    "job_id": job.job_id,
+                    "status": job.status,
+                    "workflow_name": job.workflow_name,
+                    "user_id": job.user_id,
+                    "message": f"Workflow '{workflow_name}' has been initiated successfully"
+                }
+                return job_data
             except Exception as e:
                 logger.error(f"Failed to create job {job_id}: {str(e)}")
                 raise
@@ -120,11 +126,24 @@ class DatabaseManager:
                 logger.error(f"Failed to update job {job_id}: {str(e)}")
                 raise
     
-    def get_job(self, job_id: str) -> Optional[Job]:
-        """Get a job by job_id"""
+    def get_job(self, job_id: str) -> Optional[dict]:
+        """Get a job by job_id and return as dict"""
         with db_config.get_db_session() as db:
             try:
-                return db.query(Job).filter(Job.job_id == job_id).first()
+                job = db.query(Job).filter(Job.job_id == job_id).first()
+                if job:
+                    return {
+                        "job_id": job.job_id,
+                        "status": job.status,
+                        "workflow_name": job.workflow_name,
+                        "user_id": job.user_id,
+                        "input_params": job.input_params,
+                        "results": job.results,
+                        "error_message": job.error_message,
+                        "created_at": job.created_at.isoformat() if job.created_at else None,
+                        "updated_at": job.updated_at.isoformat() if job.updated_at else None
+                    }
+                return None
             except Exception as e:
                 logger.error(f"Failed to get job {job_id}: {str(e)}")
                 raise

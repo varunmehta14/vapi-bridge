@@ -76,13 +76,14 @@ class MonitoringManager:
     def update_db_pool_metrics(self, pool_metrics: Dict[str, Any]):
         """Update database connection pool metrics"""
         for metric, value in pool_metrics.items():
-            DB_CONNECTION_POOL.labels(metric=metric).set(value)
+            if isinstance(value, (int, float)):
+                DB_CONNECTION_POOL.labels(metric=metric).set(value)
+            # Skip non-numeric values (e.g., database URL)
     
     def log_workflow_event(self, event_type: str, data: Dict[str, Any]):
         """Log workflow events with structured logging"""
         logger.info(
             event_type,
-            timestamp=datetime.utcnow().isoformat(),
             **data
         )
     
@@ -91,7 +92,6 @@ class MonitoringManager:
         logger.error(
             error_type,
             error_message=error_message,
-            timestamp=datetime.utcnow().isoformat(),
             **(context or {})
         )
 

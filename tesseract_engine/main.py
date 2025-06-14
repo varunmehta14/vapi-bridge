@@ -183,30 +183,12 @@ async def receive_user_input(user_id: str, user_input: UserInput):
 async def get_job_status(job_id: str):
     """
     Get the status and results of a specific job
-    
-    Args:
-        job_id: Unique identifier for the job
-        
-    Returns:
-        JobStatusResponse with job details and results
     """
     try:
         job = db_manager.get_job(job_id)
         if not job:
             raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-        
-        return JobStatusResponse(
-            job_id=job.job_id,
-            status=job.status,
-            workflow_name=job.workflow_name,
-            user_id=job.user_id,
-            input_params=job.input_params,
-            results=job.results,
-            error_message=job.error_message,
-            created_at=job.created_at.isoformat(),
-            updated_at=job.updated_at.isoformat()
-        )
-        
+        return JobStatusResponse(**job)
     except HTTPException:
         raise
     except Exception as e:
