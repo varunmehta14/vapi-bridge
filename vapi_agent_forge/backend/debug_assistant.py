@@ -30,7 +30,7 @@ async def debug_assistant():
         return
     
     # Initialize orchestrator
-    PUBLIC_SERVER_URL = "https://845f-2603-8000-baf0-4690-4c7d-38bd-11e8-5920.ngrok-free.app"
+    PUBLIC_SERVER_URL = "https://ba54-2603-8000-ba00-34c9-2046-d24b-6925-bbb0.ngrok-free.app"
     orchestrator = VapiOrchestrator(vapi_api_key, PUBLIC_SERVER_URL)
     
     # The assistant ID that's not working

@@ -1,67 +1,134 @@
 assistant:
-  name: "Tesseract Command Assistant"
+  name: "Student Research Assistant"
   model:
-    provider: "openai"
-    model: "gpt-4o-mini"
-    system_prompt_template: >
-      You are a specialized AI assistant for the Tesseract system. Your goal is to accurately trigger the correct tool based on the user's request.
+    provider: "google"
+    model: "gemini-1.5-flash"
+    system_prompt_template: |
+      You are a Student Research Assistant powered by LangGraph. Your responses should be:
+      
+      **FOR STUDENTS:**
+      - Help with research papers, assignments, and academic projects
+      - Provide clear, educational explanations suitable for learning
+      - Break down complex topics into digestible parts
+      - Offer study tips and research methodologies
+      
+      **VOICE-OPTIMIZED FOR STUDENTS:**
+      - Use conversational, friendly language
+      - Keep responses concise (2-3 sentences) for voice calls
+      - Ask clarifying questions about assignment requirements
+      - Provide step-by-step guidance when needed
+      
+      **RESEARCH CAPABILITIES:**
+      - Use quick_research for immediate answers during voice calls
+      - Use comprehensive_research for detailed academic research
+      - Use content_generation for assignments and projects
+      
+      Always be encouraging and supportive. Focus on helping students learn and understand concepts.
 
-      CRITICAL RULES:
-      1. If the user's request clearly matches a specific workflow tool like 'triggerFinancialAnalysisWorkflow', ask for any missing parameters and then call that tool.
-      2. For ALL OTHER requests, including simple questions, greetings, or ambiguous commands, you MUST use the 'processGeneralRequest' tool. Do not try to answer yourself.
-      3. The user's ID is {user_id}.
-
-      Example 1: User says "I need a financial analysis of Tesla". You should ask clarifying questions for 'analysis_type', then call 'triggerFinancialAnalysisWorkflow'.
-      Example 2: User says "What's the weather?" or "Hello there". You MUST call 'processGeneralRequest'.
-  voice: 
+  voice:
     provider: "playht"
     voiceId: "jennifer-playht"
-  firstMessage: "Tesseract system online. How can I assist you?"
+  
+  firstMessage: "Hi! I'm your Student Research Assistant. I can help you with research, assignments, and academic projects. What are you working on today?"
 
 tools:
-  # TOOL 1: For specific, known workflows
-  - name: "triggerFinancialAnalysisWorkflow"
-    description: "Use this specific tool to run a multi-step financial analysis on a company. Requires the company name and the type of analysis."
+  - name: "quick_research"
+    description: "Get immediate research answers optimized for voice calls (2-5 seconds)"
     parameters:
       type: "object"
       properties:
-        user_id:
+        query:
           type: "string"
-          description: "The user's unique ID."
-        company_name:
-          type: "string"
-          description: "The name of the company to analyze, e.g., 'Tesla Inc'."
-        analysis_type:
-          type: "string"
-          description: "The type of analysis to run, e.g., 'credit_risk', 'standard_review'."
-      required: ["user_id", "company_name", "analysis_type"]
+          description: "Your research question or academic topic"
+        max_sources:
+          type: "integer"
+          description: "Maximum number of sources (1-3 for quick response)"
+          minimum: 1
+          maximum: 3
+          default: 2
+        academic_focus:
+          type: "boolean"
+          description: "Focus on academic and educational sources"
+          default: true
+      required: ["query"]
     action:
       type: "api_call"
       method: "POST"
-      url: "http://localhost:8081/run_workflow/financial_analysis/{user_id}"
+      url: "https://ba54-2603-8000-ba00-34c9-2046-d24b-6925-bbb0.ngrok-free.app/webhook/tool-call"
       json_body:
-        input_params:
-          company_name: "{company_name}"
-          analysis_type: "{analysis_type}"
-      response_template: "Workflow initiated. The Job ID is {job_id}."
+        query: "{query}"
+        max_sources: "{max_sources}"
+        academic_focus: "{academic_focus}"
+      response_template: "Let me quickly research that for you..."
 
-  # TOOL 2: The general-purpose fallback
-  - name: "processGeneralRequest"
-    description: "A general-purpose tool for all other requests, simple questions, or ambiguous commands that do not fit a specific workflow."
+  - name: "comprehensive_research"
+    description: "Detailed academic research with multiple sources and citations"
     parameters:
       type: "object"
       properties:
-        user_id:
+        topic:
           type: "string"
-          description: "The user's unique ID."
-        user_input:
+          description: "The academic topic for detailed research"
+        research_depth:
           type: "string"
-          description: "The user's full, verbatim request."
-      required: ["user_id", "user_input"]
+          description: "How comprehensive the research should be"
+          enum: ["basic", "detailed", "comprehensive"]
+          default: "detailed"
+        include_citations:
+          type: "boolean"
+          description: "Include academic citations and references"
+          default: true
+        academic_level:
+          type: "string"
+          description: "Academic level for appropriate complexity"
+          enum: ["high_school", "undergraduate", "graduate"]
+          default: "undergraduate"
+      required: ["topic"]
     action:
       type: "api_call"
       method: "POST"
-      url: "http://localhost:8081/receive_user_input/{user_id}"
+      url: "https://ba54-2603-8000-ba00-34c9-2046-d24b-6925-bbb0.ngrok-free.app/webhook/tool-call"
       json_body:
-        user_input: "{user_input}"
-      response_path: "response" 
+        topic: "{topic}"
+        research_depth: "{research_depth}"
+        include_citations: "{include_citations}"
+        academic_level: "{academic_level}"
+      response_template: "I'll conduct comprehensive research on {topic} for you..."
+
+  - name: "generate_content"
+    description: "Generate academic content, essays, summaries, and study materials"
+    parameters:
+      type: "object"
+      properties:
+        content_type:
+          type: "string"
+          description: "Type of content to generate"
+          enum: ["essay_outline", "summary", "study_notes", "presentation_outline", "research_proposal"]
+        topic:
+          type: "string"
+          description: "Topic or subject for content generation"
+        length:
+          type: "string"
+          description: "Desired length of content"
+          enum: ["short", "medium", "long"]
+          default: "medium"
+        academic_style:
+          type: "boolean"
+          description: "Use formal academic writing style"
+          default: true
+        include_sources:
+          type: "boolean"
+          description: "Include reference sources"
+          default: true
+      required: ["content_type", "topic"]
+    action:
+      type: "api_call"
+      method: "POST"
+      url: "https://ba54-2603-8000-ba00-34c9-2046-d24b-6925-bbb0.ngrok-free.app/webhook/tool-call"
+      json_body:
+        content_type: "{content_type}"
+        topic: "{topic}"
+        length: "{length}"
+        academic_style: "{academic_style}"
+        include_sources: "{include_sources}"
+      response_template: "I'll generate {content_type} on {topic} for you..." 

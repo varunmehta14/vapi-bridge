@@ -79,21 +79,6 @@ def init_database():
         )
     ''')
     
-    # Tool configurations table for quick lookup
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS tool_configurations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            tool_name TEXT NOT NULL,
-            http_method TEXT NOT NULL,
-            endpoint_url TEXT,
-            action_config TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id),
-            UNIQUE(user_id, tool_name)
-        )
-    ''')
-    
     # Interactions log table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS interactions (
@@ -737,22 +722,6 @@ async def create_voice_agent(user_id: int, agent_data: VoiceAgent):
         ''', (user_id, agent_data.name, vapi_assistant["id"], agent_data.config_yaml, agent_type))
         
         agent_id = cursor.lastrowid
-        
-        # Store tool configurations for quick lookup
-        tools_config = config.get("tools", [])
-        for tool in tools_config:
-            tool_name = tool.get("name")
-            action_config = tool.get("action", {})
-            http_method = action_config.get("method", "POST")  # Default to POST
-            endpoint_url = action_config.get("url", "")
-            
-            if tool_name:
-                cursor.execute('''
-                    INSERT OR REPLACE INTO tool_configurations 
-                    (user_id, tool_name, http_method, endpoint_url, action_config)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (user_id, tool_name, http_method, endpoint_url, json.dumps(action_config)))
-        
         conn.commit()
         conn.close()
         
@@ -1145,80 +1114,13 @@ async def handle_tool_call(request: Request):
             return error_response
         
         # Extract user information for logging
-        user_id = None
-        assistant_id = None
+        user_id = 5  # Default to Student user
+        if "call" in raw_data and "customer" in raw_data["call"]:
+            customer = raw_data["call"]["customer"]
+            if "number" in customer:
+                user_id = 5  # Map to Student user
         
-        # Extract assistant ID from the request
-        if "assistant" in raw_data and "id" in raw_data["assistant"]:
-            assistant_id = raw_data["assistant"]["id"]
-        elif "call" in raw_data and "assistantId" in raw_data["call"]:
-            assistant_id = raw_data["call"]["assistantId"]
-        
-        print(f"🔍 Extracted assistant ID: {assistant_id}")
-        
-        # Look up user ID based on assistant ID
-        if assistant_id:
-            try:
-                with sqlite3.connect('vapi_forge.db') as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("""
-                        SELECT user_id FROM voice_agents 
-                        WHERE vapi_assistant_id = ?
-                    """, (assistant_id,))
-                    result = cursor.fetchone()
-                    if result:
-                        user_id = result[0]
-                        print(f"✅ Found user ID {user_id} for assistant {assistant_id}")
-                    else:
-                        print(f"⚠️ No user found for assistant ID: {assistant_id}")
-            except Exception as e:
-                print(f"⚠️ Error looking up user for assistant {assistant_id}: {e}")
-        
-        # Fallback strategies if no user found
-        if not user_id:
-            print(f"🔄 Using fallback user detection strategies...")
-            
-            # Strategy 1: Check if there's only one user in the system
-            try:
-                with sqlite3.connect('vapi_forge.db') as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT id, username FROM users ORDER BY created_at DESC LIMIT 2")
-                    users = cursor.fetchall()
-                    
-                    if len(users) == 1:
-                        user_id = users[0][0]
-                        print(f"✅ Single user system - using user ID {user_id} ({users[0][1]})")
-                    elif len(users) > 1:
-                        # Use the most recently created user as fallback
-                        user_id = users[0][0]
-                        print(f"⚠️ Multiple users found - using most recent user ID {user_id} ({users[0][1]})")
-                    else:
-                        print(f"❌ No users found in system")
-            except Exception as e:
-                print(f"⚠️ Error in fallback user detection: {e}")
-        
-        # Final fallback - create a default user if none exists
-        if not user_id:
-            try:
-                with sqlite3.connect('vapi_forge.db') as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("""
-                        INSERT OR IGNORE INTO users (username, email) 
-                        VALUES ('default_user', 'default@example.com')
-                    """)
-                    cursor.execute("SELECT id FROM users WHERE username = 'default_user'")
-                    result = cursor.fetchone()
-                    if result:
-                        user_id = result[0]
-                        conn.commit()
-                        print(f"✅ Created/using default user ID {user_id}")
-            except Exception as e:
-                print(f"❌ Failed to create default user: {e}")
-                # Absolute fallback
-                user_id = 1
-                print(f"⚠️ Using absolute fallback user ID: {user_id}")
-        
-        print(f"👤 Final User ID: {user_id} (Assistant: {assistant_id or 'unknown'})")
+        print(f"👤 User ID: {user_id}")
         
         # Get LangGraph service URL from user services or use default
         langgraph_url = None
@@ -1270,58 +1172,111 @@ async def handle_tool_call(request: Request):
                 else:
                     return custom_service_url, "/webhook"
             
-            # If no specific service mapping found, return error
-            raise ValueError(f"No service configuration found for tool: {tool_name}")
-        
-        try:
-            service_url, endpoint = get_tool_endpoint(tool_name)
-        except ValueError as e:
-            print(f"❌ SERVICE CONFIGURATION ERROR: {e}")
-            error_response = {
-                "results": [{
-                    "toolCallId": tool_call_id or "unknown",
-                    "error": f"Service not configured for tool: {tool_name}"
-                }]
+            # Default mappings for LangGraph service
+            default_mappings = {
+                "quick_research": "/quick-research",
+                "comprehensive_research": "/research", 
+                "generate_content": "/generate-content",
+                "job_analytics": "/jobs/analytics"
             }
-            return error_response
+            
+            if tool_name in default_mappings:
+                return langgraph_url, default_mappings[tool_name]
+            
+            # Fallback for unknown tools
+            return langgraph_url, "/vapi-webhook"
         
-        # Use tool parameters as-is - no transformation needed
-        # Services should handle their own parameter mapping
-        request_data = tool_parameters
+        service_url, endpoint = get_tool_endpoint(tool_name)
+        
+        if endpoint == "/vapi-webhook":
+            print(f"⚠️ Unknown tool: {tool_name}, using default vapi-webhook")
+            # For unknown tools, forward the entire request
+            request_data = {
+                "message": raw_data.get("message", raw_data),
+                "call": raw_data.get("call", {})
+            }
+        else:
+            # Transform parameters based on tool type
+            if tool_name == "comprehensive_research":
+                # Map YAML parameters to LangGraph expected format
+                request_data = {
+                    "query": tool_parameters.get("topic", ""),  # topic -> query
+                    "research_type": tool_parameters.get("research_depth", "comprehensive"),  # research_depth -> research_type
+                    "max_sources": 5,  # Default value
+                    "include_summary": True  # Default value
+                }
+                # Handle specific_questions if provided
+                if "specific_questions" in tool_parameters:
+                    request_data["specific_questions"] = tool_parameters["specific_questions"]
+                    
+            elif tool_name == "quick_research":
+                # Map YAML parameters to LangGraph expected format
+                request_data = {
+                    "query": tool_parameters.get("query", ""),
+                    "research_type": "quick",
+                    "max_sources": tool_parameters.get("max_sources", 2)
+                }
+                if "focus_area" in tool_parameters:
+                    request_data["focus_area"] = tool_parameters["focus_area"]
+                    
+            elif tool_name == "generate_content":
+                # Keep generate_content parameters as-is since they match
+                request_data = tool_parameters
+            elif tool_name == "job_analytics":
+                # Handle job analytics with dynamic endpoint routing
+                query_type = tool_parameters.get("query_type", "analytics_summary")
+                
+                # Map query types to specific endpoints and parameters
+                if query_type == "total_jobs":
+                    # Use the basic jobs list endpoint
+                    endpoint = "/jobs"
+                    request_data = {"limit": 1}  # Just need count
+                elif query_type == "job_status":
+                    # Use jobs search with status filter
+                    endpoint = "/jobs/search"
+                    request_data = {
+                        "status": tool_parameters.get("status_filter", "all"),
+                        "limit": 20
+                    }
+                elif query_type == "success_rate" or query_type == "analytics_summary":
+                    # Use analytics endpoint
+                    endpoint = "/jobs/analytics"
+                    request_data = {}
+                elif query_type == "recent_activity":
+                    # Use jobs search for recent jobs
+                    endpoint = "/jobs/search"
+                    request_data = {"limit": 10}
+                elif query_type == "job_breakdown":
+                    # Use analytics endpoint for breakdown
+                    endpoint = "/jobs/analytics"
+                    request_data = {}
+                elif query_type == "system_health":
+                    # Use health endpoint
+                    endpoint = "/health"
+                    request_data = {}
+                else:
+                    # Default to analytics
+                    endpoint = "/jobs/analytics"
+                    request_data = {}
+                
+                # Override the endpoint for this specific call
+                service_url, _ = get_tool_endpoint(tool_name)
+                target_url = f"{service_url}{endpoint}"
+                
+                print(f"🔧 Job Analytics Query:")
+                print(f"   Query Type: {query_type}")
+                print(f"   Endpoint: {endpoint}")
+                print(f"   Target URL: {target_url}")
+            else:
+                # For other tools, use parameters as-is
+                request_data = tool_parameters
         
         target_url = f"{service_url}{endpoint}"
-        
-        # Get HTTP method from stored tool configuration
-        http_method = "POST"  # Default to POST
-        
-        try:
-            with sqlite3.connect('vapi_forge.db') as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT http_method FROM tool_configurations 
-                    WHERE user_id = ? AND tool_name = ?
-                """, (user_id, tool_name))
-                result = cursor.fetchone()
-                if result:
-                    http_method = result[0]
-                    print(f"   ✅ Found stored HTTP method for {tool_name}: {http_method}")
-                else:
-                    print(f"   ⚠️ No stored configuration for {tool_name}, using default: {http_method}")
-        except Exception as e:
-            print(f"   ⚠️ Failed to get tool configuration: {e}, using default: {http_method}")
-        
-        # For GET requests, convert parameters to query parameters
-        if http_method.upper() == "GET" and request_data:
-            query_params = "&".join([f"{k}={v}" for k, v in request_data.items() if v is not None])
-            if query_params:
-                target_url += f"?{query_params}"
-            request_data = None  # No body for GET requests
-        
         print(f"\n🌐 SERVICE CALL PREPARATION:")
         print(f"   Target URL: {target_url}")
-        print(f"   Request method: {http_method}")
-        print(f"   Request data: {json.dumps(request_data, indent=2) if request_data else 'None (GET request)'}")
-        print(f"   Request size: {len(json.dumps(request_data)) if request_data else 0} characters")
+        print(f"   Request method: POST")
+        print(f"   Request data: {json.dumps(request_data, indent=2)}")
+        print(f"   Request size: {len(json.dumps(request_data))} characters")
         
         # Forward the request to the appropriate service
         async with httpx.AsyncClient() as client:
@@ -1329,18 +1284,11 @@ async def handle_tool_call(request: Request):
                 print(f"\n🚀 MAKING SERVICE CALL...")
                 start_time = time.time()
                 
-                # Make request with dynamic HTTP method from configuration
-                if http_method.upper() == "GET":
-                    response = await client.get(
-                        target_url,
-                        timeout=30.0
-                    )
-                else:
-                    response = await client.post(
-                        target_url,
-                        json=request_data,
-                        timeout=30.0
-                    )
+                response = await client.post(
+                    target_url,
+                    json=request_data,
+                    timeout=30.0
+                )
                 
                 end_time = time.time()
                 response_time = end_time - start_time
@@ -1393,59 +1341,195 @@ async def handle_tool_call(request: Request):
                 
                 print(f"\n🔄 FORMATTING RESPONSE FOR VAPI:")
                 
-                # Enhanced voice-optimized response formatting
-                formatted_result = ""
+                # Return the result in the format VAPI expects with enhanced formatting
+                if isinstance(result, dict) and "summary" in result:
+                    # For research tools, provide a comprehensive response
+                    formatted_result = f"Based on my research on '{result.get('query', 'your topic')}', here's what I found:\n\n{result['summary']}"
+                    if "source" in result:
+                        formatted_result += f"\n\nSource: {result['source']}"
+                    
+                    print(f"   ✅ Research result detected")
+                    print(f"   Query: {result.get('query', 'N/A')}")
+                    print(f"   Summary length: {len(result.get('summary', ''))} characters")
+                    print(f"   Source: {result.get('source', 'N/A')}")
+                    print(f"   Formatted result length: {len(formatted_result)} characters")
+                    
+                    # Use VAPI's exact required format
+                    vapi_response = {
+                        "results": [{
+                            "toolCallId": tool_call_id or "unknown",
+                            "result": formatted_result
+                        }]
+                    }
+                    
+                    print(f"\n📤 FINAL VAPI RESPONSE:")
+                    print(f"   Response format: VAPI-compliant results array")
+                    print(f"   Tool call ID: {tool_call_id}")
+                    print(f"   Result length: {len(formatted_result)} characters")
+                    
+                    return vapi_response
                 
-                if isinstance(result, dict):
-                    # For voice responses, create more natural speech
+                elif tool_name == "job_analytics" and isinstance(result, dict):
+                    # Special formatting for job analytics results
+                    print(f"   ✅ Job analytics result detected")
+                    
+                    query_type = tool_parameters.get("query_type", "analytics_summary")
+                    formatted_result = ""
+                    
                     if "summary" in result:
+                        # Analytics summary response
                         summary = result["summary"]
-                        source = result.get("source", "")
+                        formatted_result = f"Here's the current system analytics:\n\n"
+                        formatted_result += f"📊 Total Jobs: {summary.get('total_jobs', 'N/A')}\n"
+                        formatted_result += f"🔄 Active Jobs: {summary.get('active_jobs', 'N/A')}\n"
+                        formatted_result += f"✅ Success Rate: {summary.get('success_rate', 'N/A')}\n"
+                        formatted_result += f"📈 Recent 24h: {summary.get('recent_24h', 'N/A')}\n"
+                        formatted_result += f"⏱️ Avg Processing Time: {summary.get('avg_processing_time_minutes', 'N/A')} minutes"
                         
-                        # Create voice-friendly response
-                        if source:
-                            formatted_result = f"Based on my research using {source}, here's what I found: {summary}"
+                        if "status_breakdown" in result:
+                            breakdown = result["status_breakdown"]
+                            formatted_result += f"\n\n📋 Status Breakdown:\n"
+                            for status, count in breakdown.items():
+                                formatted_result += f"  • {status.title()}: {count}\n"
+                        
+                        if "request_type_breakdown" in result:
+                            types = result["request_type_breakdown"]
+                            formatted_result += f"\n🔧 Request Types:\n"
+                            for req_type, count in types.items():
+                                formatted_result += f"  • {req_type.replace('_', ' ').title()}: {count}\n"
+                    
+                    elif "jobs" in result:
+                        # Jobs list response
+                        jobs = result["jobs"]
+                        total = result.get("total", len(jobs))
+                        
+                        if query_type == "total_jobs":
+                            formatted_result = f"The system currently has {total} total jobs in the database."
+                        elif query_type == "recent_activity":
+                            formatted_result = f"Here are the {len(jobs)} most recent jobs:\n\n"
+                            for i, job in enumerate(jobs[:5], 1):
+                                status = job.get("status", "unknown")
+                                req_type = job.get("request_type", "unknown")
+                                created = job.get("created_at", "unknown")
+                                formatted_result += f"{i}. {req_type.replace('_', ' ').title()} - {status.title()} ({created})\n"
                         else:
-                            formatted_result = f"Here's what I found: {summary}"
-                        print(f"   ✅ Using enhanced voice format with summary")
+                            formatted_result = f"Found {len(jobs)} jobs matching your criteria."
+                    
+                    elif "status" in result:
+                        # Health check response
+                        formatted_result = f"System Health Status: {result.get('status', 'unknown').title()}\n"
+                        if "active_jobs" in result:
+                            formatted_result += f"Active Jobs: {result['active_jobs']}\n"
+                        if "database" in result:
+                            formatted_result += f"Database: {result['database'].title()}"
+                    
                     else:
-                        # Fallback to original field priority logic
-                        for field in ["result", "content", "answer", "message", "data"]:
-                            if field in result and result[field]:
-                                formatted_result = str(result[field])
-                                print(f"   ✅ Using field '{field}' from service response")
-                                break
-                        
-                        # If no common field found, use the entire response as JSON
-                        if not formatted_result:
-                            formatted_result = json.dumps(result, indent=2)
-                            print(f"   ⚠️ No standard field found, using full JSON response")
+                        # Fallback formatting
+                        formatted_result = f"Job analytics query completed. Here's the data: {json.dumps(result, indent=2)}"
+                    
+                    print(f"   Formatted analytics result: {len(formatted_result)} characters")
+                    
+                    vapi_response = {
+                        "results": [{
+                            "toolCallId": tool_call_id or "unknown",
+                            "result": formatted_result
+                        }]
+                    }
+                    
+                    print(f"\n📤 FINAL VAPI RESPONSE (Job Analytics):")
+                    print(f"   Response format: VAPI-compliant results array")
+                    print(f"   Tool call ID: {tool_call_id}")
+                    print(f"   Result length: {len(formatted_result)} characters")
+                    
+                    return vapi_response
                 
+                elif isinstance(result, dict) and "result" in result:
+                    print(f"   ✅ Generic result detected")
+                    print(f"   Result content: {result['result'][:200]}...")
+                    
+                    vapi_response = {
+                        "results": [{
+                            "toolCallId": tool_call_id or "unknown",
+                            "result": str(result["result"])
+                        }]
+                    }
+                    
+                    print(f"\n📤 FINAL VAPI RESPONSE:")
+                    print(f"   Response format: VAPI-compliant results array")
+                    print(f"   Tool call ID: {tool_call_id}")
+                    
+                    return vapi_response
+                    
+                elif isinstance(result, dict) and "content" in result:
+                    print(f"   ✅ Content result detected")
+                    print(f"   Content length: {len(str(result['content']))} characters")
+                    
+                    vapi_response = {
+                        "results": [{
+                            "toolCallId": tool_call_id or "unknown",
+                            "result": str(result["content"])
+                        }]
+                    }
+                    
+                    print(f"\n📤 FINAL VAPI RESPONSE:")
+                    print(f"   Response format: VAPI-compliant results array")
+                    print(f"   Tool call ID: {tool_call_id}")
+                    
+                    return vapi_response
+                    
                 elif isinstance(result, str):
-                    formatted_result = result
-                    print(f"   ✅ Using string response directly")
+                    print(f"   ✅ String result detected")
+                    print(f"   String length: {len(result)} characters")
+                    print(f"   String preview: {result[:200]}...")
+                    
+                    vapi_response = {
+                        "results": [{
+                            "toolCallId": tool_call_id or "unknown",
+                            "result": result
+                        }]
+                    }
+                    
+                    print(f"\n📤 FINAL VAPI RESPONSE:")
+                    print(f"   Response format: VAPI-compliant results array")
+                    print(f"   Tool call ID: {tool_call_id}")
+                    
+                    return vapi_response
                     
                 else:
-                    formatted_result = str(result)
-                    print(f"   ⚠️ Converting {type(result).__name__} to string")
-                
-                print(f"   Final result length: {len(formatted_result)} characters")
-                
-                # Use VAPI's exact required format
-                vapi_response = {
-                    "results": [{
-                        "toolCallId": tool_call_id or "unknown",
-                        "result": formatted_result
-                    }]
-                }
-                
-                print(f"\n📤 FINAL VAPI RESPONSE:")
-                print(f"   Response format: VAPI-compliant results array")
-                print(f"   Tool call ID: {tool_call_id}")
-                print(f"   Result preview: {formatted_result[:200]}...")
-                
-                return vapi_response
-                
+                    print(f"   ⚠️ Unknown result format detected")
+                    print(f"   Result type: {type(result)}")
+                    print(f"   Result keys: {list(result.keys()) if isinstance(result, dict) else 'N/A'}")
+                    
+                    # For any other dict response, try to format it nicely
+                    if isinstance(result, dict):
+                        formatted_result = ""
+                        for key, value in result.items():
+                            if key in ["summary", "content", "result", "answer"]:
+                                formatted_result = str(value)
+                                print(f"   ✅ Found usable field '{key}' with {len(str(value))} characters")
+                                break
+                        if not formatted_result:
+                            formatted_result = json.dumps(result, indent=2)
+                            print(f"   ⚠️ No usable field found, using full JSON ({len(formatted_result)} characters)")
+                    else:
+                        formatted_result = json.dumps(result)
+                        print(f"   ⚠️ Converting non-dict result to JSON ({len(formatted_result)} characters)")
+                    
+                    # Use VAPI's exact required format
+                    vapi_response = {
+                        "results": [{
+                            "toolCallId": tool_call_id or "unknown",
+                            "result": formatted_result
+                        }]
+                    }
+                    
+                    print(f"\n📤 FINAL VAPI RESPONSE:")
+                    print(f"   Response format: VAPI-compliant results array")
+                    print(f"   Tool call ID: {tool_call_id}")
+                    print(f"   Result preview: {formatted_result[:300]}...")
+                    
+                    return vapi_response
+                    
             except httpx.ConnectError as e:
                 print(f"\n❌ CONNECTION ERROR:")
                 print(f"   Target URL: {target_url}")
@@ -2941,38 +3025,6 @@ async def service_routing_documentation():
             }
         }
     }
-
-@app.get("/users/{user_id}/tool-configurations")
-async def get_user_tool_configurations(user_id: int):
-    """Get all stored tool configurations for a user"""
-    try:
-        conn = sqlite3.connect('vapi_forge.db')
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT tool_name, http_method, endpoint_url, action_config, created_at
-            FROM tool_configurations WHERE user_id = ? ORDER BY tool_name
-        ''', (user_id,))
-        
-        configs = cursor.fetchall()
-        conn.close()
-        
-        return {
-            "tool_configurations": [
-                {
-                    "tool_name": config[0],
-                    "http_method": config[1],
-                    "endpoint_url": config[2],
-                    "action_config": json.loads(config[3]) if config[3] else {},
-                    "created_at": config[4]
-                }
-                for config in configs
-            ],
-            "status": "success"
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get tool configurations: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(

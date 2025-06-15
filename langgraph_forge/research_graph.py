@@ -254,11 +254,16 @@ class ResearchGraph:
             summaries = []
             
             for source in sources:
+                # Ensure content is a string before slicing
+                content = source.get('content', '')
+                if not isinstance(content, str):
+                    content = str(content)
+                
                 analysis_prompt = f"""
                 Analyze the following source for information relevant to: {query}
                 
                 Source: {source['source']}
-                Content: {source['content'][:2000]}...
+                Content: {content[:2000]}...
                 
                 Extract the most important and relevant information. Focus on:
                 1. Key facts and data points
@@ -409,6 +414,11 @@ class ResearchGraph:
             length = state["length"]
             research_data = state.get("research_data", {})
             
+            # Safely extract and slice summary data
+            summary_data = research_data.get('summary', 'No specific research data available')
+            if not isinstance(summary_data, str):
+                summary_data = str(summary_data)
+            
             outline_prompt = f"""
             Create a detailed outline for {content_type} about: {topic}
             
@@ -418,7 +428,7 @@ class ResearchGraph:
             - Content Type: {content_type}
             
             Background Research:
-            {research_data.get('summary', 'No specific research data available')[:1000]}
+            {summary_data[:1000]}
             
             Create a clear, logical outline with:
             1. Compelling introduction
@@ -453,6 +463,11 @@ class ResearchGraph:
             outline = state["outline"]
             research_data = state.get("research_data", {})
             
+            # Safely extract and slice summary data
+            summary_data = research_data.get('summary', '')
+            if not isinstance(summary_data, str):
+                summary_data = str(summary_data)
+            
             content_prompt = f"""
             Write a complete {content_type} about: {topic}
             
@@ -462,7 +477,7 @@ class ResearchGraph:
             - Follow this outline: {outline}
             
             Background Information:
-            {research_data.get('summary', '')[:1500]}
+            {summary_data[:1500]}
             
             Write engaging, informative content that:
             1. Captures attention from the start

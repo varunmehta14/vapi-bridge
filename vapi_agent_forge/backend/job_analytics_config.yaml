@@ -62,16 +62,17 @@ tools:
           query: "{query}"
           focus_area: "{focus_area}"
           max_sources: "{max_sources}"
+          research_type: "quick"
 
   - name: "comprehensive_research"
     description: "Conduct comprehensive, in-depth research on complex topics with multiple sources and detailed analysis"
     parameters:
       type: "object"
       properties:
-        topic:
+        query:
           type: "string"
           description: "The main topic or subject to research comprehensively"
-        research_depth:
+        research_type:
           type: "string"
           description: "Depth of research: 'standard', 'comprehensive', or 'expert'"
           enum: ["standard", "comprehensive", "expert"]
@@ -81,21 +82,21 @@ tools:
           items:
             type: "string"
           description: "Specific questions to address during research"
-        include_statistics:
+        include_summary:
           type: "boolean"
           description: "Whether to include statistical data and metrics"
           default: true
-      required: ["topic"]
+      required: ["query"]
     action:
       method: "POST"
       url: "https://ba54-2603-8000-ba00-34c9-2046-d24b-6925-bbb0.ngrok-free.app/webhook/tool-call"
       json_body:
         tool_name: "comprehensive_research"
         parameters:
-          topic: "{topic}"
-          research_depth: "{research_depth}"
-          specific_questions: "{specific_questions}"
-          include_statistics: "{include_statistics}"
+          query: "{query}"
+          research_type: "{research_type}"
+          max_sources: 5
+          include_summary: "{include_summary}"
 
   - name: "generate_content"
     description: "Generate high-quality content such as articles, summaries, reports, or creative writing"
@@ -169,4 +170,12 @@ tools:
       required: ["query_type"]
     action:
       method: "GET"
-      url: "https://ba54-2603-8000-ba00-34c9-2046-d24b-6925-bbb0.ngrok-free.app/webhook/tool-call" 
+      url: "https://ba54-2603-8000-ba00-34c9-2046-d24b-6925-bbb0.ngrok-free.app/webhook/tool-call"
+      json_body:
+        tool_name: "job_analytics"
+        parameters:
+          query_type: "{query_type}"
+          status_filter: "{status_filter}"
+          request_type_filter: "{request_type_filter}"
+          time_period: "{time_period}"
+          limit: "{limit}" 
