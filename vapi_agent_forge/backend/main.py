@@ -79,6 +79,21 @@ def init_database():
         )
     ''')
     
+    # Tool configurations table for quick lookup
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS tool_configurations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            tool_name TEXT NOT NULL,
+            http_method TEXT NOT NULL,
+            endpoint_url TEXT,
+            action_config TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            UNIQUE(user_id, tool_name)
+        )
+    ''')
+    
     # Interactions log table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS interactions (
@@ -722,6 +737,22 @@ async def create_voice_agent(user_id: int, agent_data: VoiceAgent):
         ''', (user_id, agent_data.name, vapi_assistant["id"], agent_data.config_yaml, agent_type))
         
         agent_id = cursor.lastrowid
+        
+        # Store tool configurations for quick lookup
+        tools_config = config.get("tools", [])
+        for tool in tools_config:
+            tool_name = tool.get("name")
+            action_config = tool.get("action", {})
+            http_method = action_config.get("method", "POST")  # Default to POST
+            endpoint_url = action_config.get("url", "")
+            
+            if tool_name:
+                cursor.execute('''
+                    INSERT OR REPLACE INTO tool_configurations 
+                    (user_id, tool_name, http_method, endpoint_url, action_config)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (user_id, tool_name, http_method, endpoint_url, json.dumps(action_config)))
+        
         conn.commit()
         conn.close()
         
@@ -883,6 +914,16 @@ async def create_vapi_assistant_from_config(config: dict, user_vapi_key: str, us
     # First, create tools separately
     tool_ids = []
     for tool in tools_config:
+        # Get the server URL from the tool's action configuration or fallback to default
+        server_url = f"{PUBLIC_SERVER_URL}/webhook/tool-call"  # Default fallback
+        
+        # Check if tool has action configuration with URL
+        if "action" in tool and "url" in tool["action"]:
+            server_url = tool["action"]["url"]
+            print(f"🔧 Using custom URL for tool '{tool['name']}': {server_url}")
+        else:
+            print(f"🔧 Using default URL for tool '{tool['name']}': {server_url}")
+        
         tool_data = {
             "type": "function",
             "function": {
@@ -891,7 +932,7 @@ async def create_vapi_assistant_from_config(config: dict, user_vapi_key: str, us
                 "parameters": tool["parameters"]
             },
             "server": {
-                "url": f"{PUBLIC_SERVER_URL}/webhook/tool-call"
+                "url": server_url
             }
         }
         
@@ -998,7 +1039,7 @@ async def create_vapi_assistant_from_config(config: dict, user_vapi_key: str, us
 @app.post("/webhook/tool-call")
 async def handle_tool_call(request: Request):
     """
-    Handle Vapi tool calls and forward them to the LangGraph service for processing
+    Handle Vapi tool calls and route them to specific LangGraph service endpoints
     
     Args:
         request: Raw FastAPI request from Vapi
@@ -1006,28 +1047,115 @@ async def handle_tool_call(request: Request):
     Returns:
         Response from LangGraph service
     """
-    print(f"\n{'='*80}")
-    print(f"🎯 WEBHOOK TOOL CALL RECEIVED at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"\n{'='*100}")
+    print(f"🎯 VAPI WEBHOOK TOOL CALL RECEIVED at {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"🎯 Request method: {request.method}")
     print(f"🎯 Request URL: {request.url}")
-    print(f"{'='*80}")
+    print(f"🎯 Request headers: {dict(request.headers)}")
+    print(f"{'='*100}")
     
     try:
         # Get the raw JSON data from Vapi
         raw_data = await request.json()
-        print(f"🔍 Raw webhook data from Vapi: {json.dumps(raw_data, indent=2)}")
+        print(f"📥 RAW VAPI REQUEST:")
+        print(f"   Size: {len(json.dumps(raw_data))} characters")
+        print(f"   Data: {json.dumps(raw_data, indent=2)}")
+        
+        # Validate JSON structure
+        if not isinstance(raw_data, dict):
+            print(f"❌ VALIDATION ERROR: Request is not a valid JSON object")
+            return {"error": "Invalid request format - not a JSON object"}
+        
+        # Extract tool call information with detailed logging
+        tool_calls = []
+        tool_name = None
+        tool_parameters = {}
+        tool_call_id = None
+        
+        print(f"\n🔍 EXTRACTING TOOL CALL INFORMATION:")
+        
+        # Check different possible structures for tool calls
+        if "message" in raw_data:
+            message = raw_data["message"]
+            print(f"   ✅ Found 'message' field")
+            print(f"   Message type: {message.get('type', 'unknown')}")
+            
+            if "toolCalls" in message and message["toolCalls"]:
+                tool_calls = message["toolCalls"]
+                print(f"   ✅ Found 'toolCalls' with {len(tool_calls)} calls")
+            elif "toolCallList" in message and message["toolCallList"]:
+                tool_calls = message["toolCallList"]
+                print(f"   ✅ Found 'toolCallList' with {len(tool_calls)} calls")
+            else:
+                print(f"   ❌ No 'toolCalls' or 'toolCallList' found in message")
+                print(f"   Available message keys: {list(message.keys())}")
+        else:
+            print(f"   ❌ No 'message' field found in request")
+            print(f"   Available top-level keys: {list(raw_data.keys())}")
+        
+        if tool_calls:
+            print(f"\n🔧 PROCESSING TOOL CALLS:")
+            # Get the first tool call
+            tool_call = tool_calls[0]
+            print(f"   Tool call structure: {json.dumps(tool_call, indent=4)}")
+            
+            tool_call_id = tool_call.get("id")
+            print(f"   Tool call ID: {tool_call_id}")
+            
+            if "function" in tool_call:
+                function_data = tool_call["function"]
+                tool_name = function_data.get("name")
+                tool_parameters = function_data.get("arguments", {})
+                
+                print(f"   ✅ Function found:")
+                print(f"      Name: {tool_name}")
+                print(f"      Arguments type: {type(tool_parameters)}")
+                print(f"      Arguments: {tool_parameters}")
+                
+                # If arguments is a string, parse it as JSON
+                if isinstance(tool_parameters, str):
+                    print(f"   🔄 Parsing string arguments as JSON...")
+                    try:
+                        tool_parameters = json.loads(tool_parameters)
+                        print(f"   ✅ Successfully parsed JSON arguments: {tool_parameters}")
+                    except json.JSONDecodeError as e:
+                        print(f"   ❌ Failed to parse tool arguments as JSON: {e}")
+                        print(f"   Raw arguments string: {repr(tool_parameters)}")
+                        tool_parameters = {}
+            else:
+                print(f"   ❌ No 'function' field found in tool call")
+                print(f"   Available tool call keys: {list(tool_call.keys())}")
+        else:
+            print(f"   ❌ No tool calls found")
+        
+        print(f"\n📋 EXTRACTED TOOL INFORMATION:")
+        print(f"   Tool name: {tool_name}")
+        print(f"   Tool call ID: {tool_call_id}")
+        print(f"   Tool parameters: {json.dumps(tool_parameters, indent=2)}")
+        print(f"   Parameters size: {len(json.dumps(tool_parameters))} characters")
+        
+        if not tool_name:
+            error_response = {
+                "results": [{
+                    "toolCallId": tool_call_id or "unknown",
+                    "error": "No tool call found in request"
+                }]
+            }
+            print(f"❌ RETURNING ERROR: {error_response}")
+            return error_response
         
         # Extract user information for logging
-        user_id = 1  # Default user for demo
+        user_id = 5  # Default to Student user
         if "call" in raw_data and "customer" in raw_data["call"]:
             customer = raw_data["call"]["customer"]
             if "number" in customer:
-                user_id = 1  # You could map phone numbers to user IDs here
+                user_id = 5  # Map to Student user
         
         print(f"👤 User ID: {user_id}")
         
         # Get LangGraph service URL from user services or use default
         langgraph_url = None
+        user_service_config = {}
         try:
             # Try to get user's configured LangGraph service
             with sqlite3.connect('vapi_forge.db') as conn:
@@ -1039,8 +1167,17 @@ async def handle_tool_call(request: Request):
                 result = cursor.fetchone()
                 if result:
                     langgraph_url = result[0]
+                
+                # Get all user service configurations for dynamic endpoint mapping
+                cursor.execute("""
+                    SELECT service_name, service_url FROM user_services 
+                    WHERE user_id = ?
+                """, (user_id,))
+                services = cursor.fetchall()
+                user_service_config = {service[0]: service[1] for service in services}
+                
         except Exception as e:
-            print(f"⚠️ Could not get user's LangGraph service: {e}")
+            print(f"⚠️ Could not get user's service configuration: {e}")
         
         # Default to localhost if no service configured
         if not langgraph_url:
@@ -1049,64 +1186,388 @@ async def handle_tool_call(request: Request):
         # Ensure URL has no trailing slash
         langgraph_url = langgraph_url.rstrip('/')
         
-        print(f"🔄 Forwarding to LangGraph service: {langgraph_url}/vapi-webhook")
+        # Dynamic tool endpoint mapping based on user configuration or defaults
+        def get_tool_endpoint(tool_name: str) -> tuple[str, str]:
+            """
+            Get the service URL and endpoint for a tool based on user configuration
+            Returns: (service_url, endpoint_path)
+            """
+            # Check if user has specific service mapping for this tool
+            tool_service_key = f"{tool_name}_service"
+            if tool_service_key in user_service_config:
+                custom_service_url = user_service_config[tool_service_key].rstrip('/')
+                # Extract endpoint from the URL if it contains a path
+                if '/' in custom_service_url.split('://', 1)[1]:
+                    base_url, endpoint = custom_service_url.rsplit('/', 1)
+                    return base_url, f"/{endpoint}"
+                else:
+                    return custom_service_url, "/webhook"
+            
+            # If no specific service mapping found, return error
+            raise ValueError(f"No service configuration found for tool: {tool_name}")
         
-        # Forward the request to LangGraph service
+        try:
+            service_url, endpoint = get_tool_endpoint(tool_name)
+        except ValueError as e:
+            print(f"❌ SERVICE CONFIGURATION ERROR: {e}")
+            error_response = {
+                "results": [{
+                    "toolCallId": tool_call_id or "unknown",
+                    "error": f"Service not configured for tool: {tool_name}"
+                }]
+            }
+            return error_response
+        
+        # Use tool parameters as-is - no transformation needed
+        # Services should handle their own parameter mapping
+        request_data = tool_parameters
+        
+        target_url = f"{service_url}{endpoint}"
+        
+        # Get HTTP method from stored tool configuration
+        http_method = "POST"  # Default to POST
+        
+        try:
+            with sqlite3.connect('vapi_forge.db') as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT http_method FROM tool_configurations 
+                    WHERE user_id = ? AND tool_name = ?
+                """, (user_id, tool_name))
+                result = cursor.fetchone()
+                if result:
+                    http_method = result[0]
+                    print(f"   ✅ Found stored HTTP method for {tool_name}: {http_method}")
+                else:
+                    print(f"   ⚠️ No stored configuration for {tool_name}, using default: {http_method}")
+        except Exception as e:
+            print(f"   ⚠️ Failed to get tool configuration: {e}, using default: {http_method}")
+        
+        # For GET requests, convert parameters to query parameters
+        if http_method.upper() == "GET" and request_data:
+            query_params = "&".join([f"{k}={v}" for k, v in request_data.items() if v is not None])
+            if query_params:
+                target_url += f"?{query_params}"
+            request_data = None  # No body for GET requests
+        
+        print(f"\n🌐 SERVICE CALL PREPARATION:")
+        print(f"   Target URL: {target_url}")
+        print(f"   Request method: {http_method}")
+        print(f"   Request data: {json.dumps(request_data, indent=2) if request_data else 'None (GET request)'}")
+        print(f"   Request size: {len(json.dumps(request_data)) if request_data else 0} characters")
+        
+        # Forward the request to the appropriate service
         async with httpx.AsyncClient() as client:
             try:
-                # Forward the exact webhook data to LangGraph
-                response = await client.post(
-                    f"{langgraph_url}/vapi-webhook",
-                    json={
-                        "message": raw_data.get("message", raw_data),
-                        "call": raw_data.get("call", {})
-                    },
-                    timeout=30.0
-                )
+                print(f"\n🚀 MAKING SERVICE CALL...")
+                start_time = time.time()
                 
-                if response.status_code == 200:
-                    result = response.json()
-                    print(f"✅ LangGraph response: {result}")
-                    
-                    # Log successful interaction
-                    await log_interaction(user_id, None, "tool_forwarded", "Successfully forwarded to LangGraph")
-                    
-                    return result
+                # Make request with dynamic HTTP method from configuration
+                if http_method.upper() == "GET":
+                    response = await client.get(
+                        target_url,
+                        timeout=30.0
+                    )
                 else:
-                    print(f"❌ LangGraph service error: {response.status_code}")
-                    print(f"Response: {response.text}")
+                    response = await client.post(
+                        target_url,
+                        json=request_data,
+                        timeout=30.0
+                    )
+                
+                end_time = time.time()
+                response_time = end_time - start_time
+                
+                print(f"\n📥 SERVICE RESPONSE RECEIVED:")
+                print(f"   Status code: {response.status_code}")
+                print(f"   Response time: {response_time:.2f} seconds")
+                print(f"   Response headers: {dict(response.headers)}")
+                print(f"   Response size: {len(response.text)} characters")
+                
+                # Check HTTP status code
+                if response.status_code != 200:
+                    print(f"❌ NON-200 STATUS CODE DETECTED!")
+                    print(f"   Status: {response.status_code}")
+                    print(f"   Response text: {response.text}")
                     
-                    # Fallback to error response
-                    return {
-                        "result": f"I'm having trouble processing your request. LangGraph service returned status {response.status_code}."
+                    error_response = {
+                        "results": [{
+                            "toolCallId": tool_call_id or "unknown",
+                            "error": f"Service returned status {response.status_code}: {response.text[:200]}"
+                        }]
                     }
                     
-            except httpx.ConnectError:
-                print(f"❌ Cannot connect to LangGraph service at {langgraph_url}")
-                return {
-                    "result": "I'm currently unavailable. The LangGraph service is not reachable. Please try again later."
+                    print(f"❌ RETURNING ERROR RESPONSE: {json.dumps(error_response, indent=2)}")
+                    return error_response
+                
+                # Parse JSON response
+                try:
+                    result = response.json()
+                    print(f"✅ SERVICE RESPONSE PARSED:")
+                    print(f"   Response type: {type(result)}")
+                    print(f"   Response keys: {list(result.keys()) if isinstance(result, dict) else 'N/A'}")
+                    print(f"   Response data: {json.dumps(result, indent=2)}")
+                except json.JSONDecodeError as e:
+                    print(f"❌ FAILED TO PARSE SERVICE RESPONSE AS JSON:")
+                    print(f"   Error: {e}")
+                    print(f"   Raw response: {response.text[:1000]}")
+                    
+                    error_response = {
+                        "error": "Service returned invalid JSON",
+                        "raw_response": response.text[:500]
+                    }
+                    if tool_call_id:
+                        error_response["toolCallId"] = tool_call_id
+                    
+                    return error_response
+                
+                # Log successful interaction
+                await log_interaction(user_id, None, "tool_executed", f"Successfully executed {tool_name}")
+                
+                print(f"\n🔄 FORMATTING RESPONSE FOR VAPI:")
+                
+                # Dynamic response formatting - let services handle their own formatting
+                # Just extract the most relevant content from the response
+                formatted_result = ""
+                
+                if isinstance(result, dict):
+                    # Try common response fields in order of preference
+                    for field in ["result", "summary", "content", "answer", "message", "data"]:
+                        if field in result and result[field]:
+                            formatted_result = str(result[field])
+                            print(f"   ✅ Using field '{field}' from service response")
+                            break
+                    
+                    # If no common field found, use the entire response as JSON
+                    if not formatted_result:
+                        formatted_result = json.dumps(result, indent=2)
+                        print(f"   ⚠️ No standard field found, using full JSON response")
+                        
+                elif isinstance(result, str):
+                    formatted_result = result
+                    print(f"   ✅ Using string response directly")
+                    
+                else:
+                    formatted_result = str(result)
+                    print(f"   ⚠️ Converting {type(result).__name__} to string")
+                
+                print(f"   Final result length: {len(formatted_result)} characters")
+                
+                # Use VAPI's exact required format
+                vapi_response = {
+                    "results": [{
+                        "toolCallId": tool_call_id or "unknown",
+                        "result": formatted_result
+                    }]
                 }
-            except httpx.TimeoutException:
-                print(f"❌ Timeout connecting to LangGraph service")
-                return {
-                    "result": "I'm taking longer than usual to respond. Please try your request again."
+                
+                print(f"\n📤 FINAL VAPI RESPONSE:")
+                print(f"   Response format: VAPI-compliant results array")
+                print(f"   Tool call ID: {tool_call_id}")
+                print(f"   Result preview: {formatted_result[:200]}...")
+                
+                return vapi_response
+                
+            except httpx.ConnectError as e:
+                print(f"\n❌ CONNECTION ERROR:")
+                print(f"   Target URL: {target_url}")
+                print(f"   Error: {str(e)}")
+                
+                error_response = {
+                    "results": [{
+                        "toolCallId": tool_call_id or "unknown",
+                        "error": f"Cannot connect to service: {str(e)}"
+                    }]
                 }
+                
+                print(f"❌ RETURNING CONNECTION ERROR: {json.dumps(error_response, indent=2)}")
+                return error_response
+                
+            except httpx.TimeoutException as e:
+                print(f"\n❌ TIMEOUT ERROR:")
+                print(f"   Target URL: {target_url}")
+                print(f"   Timeout: 30 seconds")
+                print(f"   Error: {str(e)}")
+                
+                error_response = {
+                    "results": [{
+                        "toolCallId": tool_call_id or "unknown",
+                        "error": "Service timeout (30 seconds)"
+                    }]
+                }
+                
+                print(f"❌ RETURNING TIMEOUT ERROR: {json.dumps(error_response, indent=2)}")
+                return error_response
+                
             except Exception as e:
-                print(f"❌ Error forwarding to LangGraph: {e}")
-                return {
-                    "result": f"I encountered an error while processing your request: {str(e)}"
+                print(f"\n❌ UNEXPECTED ERROR:")
+                print(f"   Error type: {type(e).__name__}")
+                print(f"   Error message: {str(e)}")
+                print(f"   Target URL: {target_url}")
+                
+                import traceback
+                print(f"   Traceback: {traceback.format_exc()}")
+                
+                error_response = {
+                    "error": f"Unexpected error: {str(e)}",
+                    "error_type": type(e).__name__,
+                    "target_url": target_url
                 }
+                if tool_call_id:
+                    error_response["toolCallId"] = tool_call_id
+                
+                print(f"❌ RETURNING UNEXPECTED ERROR: {json.dumps(error_response, indent=2)}")
+                return error_response
         
     except json.JSONDecodeError as e:
-        print(f"❌ JSON decode error: {e}")
-        return {"result": f"Error: Invalid request format - {str(e)}"}
+        print(f"\n❌ JSON DECODE ERROR:")
+        print(f"   Error: {str(e)}")
+        print(f"   Request content type: {request.headers.get('content-type', 'unknown')}")
+        
+        error_response = {
+            "error": f"Invalid JSON in request: {str(e)}",
+            "content_type": request.headers.get('content-type', 'unknown')
+        }
+        
+        print(f"❌ RETURNING JSON ERROR: {json.dumps(error_response, indent=2)}")
+        return error_response
+        
     except Exception as e:
-        print(f"❌ Unexpected error in webhook: {e}")
+        print(f"\n❌ WEBHOOK UNEXPECTED ERROR:")
+        print(f"   Error type: {type(e).__name__}")
+        print(f"   Error message: {str(e)}")
+        
         import traceback
-        traceback.print_exc()
-        return {"result": f"Error: {str(e)}"}
+        print(f"   Full traceback: {traceback.format_exc()}")
+        
+        error_response = {
+            "error": f"Webhook error: {str(e)}",
+            "error_type": type(e).__name__
+        }
+        
+        print(f"❌ RETURNING WEBHOOK ERROR: {json.dumps(error_response, indent=2)}")
+        return error_response
 
-# Add a catch-all webhook endpoint to see if Vapi calls different URLs
+# Move the ultra-fast webhook before the catch-all route
+@app.post("/webhook/vapi-fast")
+async def handle_vapi_fast_tool_call(request: Request):
+    """
+    Ultra-fast webhook for VAPI tool calls - uses VAPI's required response format
+    Response format: {"results": [{"toolCallId": "...", "result": "..."}]}
+    """
+    print(f"\n🚀 VAPI FAST WEBHOOK at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    try:
+        # Get the raw JSON data from Vapi
+        raw_data = await request.json()
+        
+        # Quick extraction without detailed logging
+        tool_call_id = None
+        tool_name = None
+        tool_parameters = {}
+        
+        if "message" in raw_data:
+            message = raw_data["message"]
+            tool_calls = message.get("toolCalls", []) or message.get("toolCallList", [])
+            
+            if tool_calls:
+                tool_call = tool_calls[0]
+                tool_call_id = tool_call.get("id")
+                if "function" in tool_call:
+                    tool_name = tool_call["function"]["name"]
+                    tool_parameters = tool_call["function"].get("arguments", {})
+                    
+                    if isinstance(tool_parameters, str):
+                        try:
+                            tool_parameters = json.loads(tool_parameters)
+                        except:
+                            tool_parameters = {}
+        
+        print(f"⚡ Fast processing: {tool_name} with ID: {tool_call_id}")
+        
+        # Validate required fields per VAPI documentation
+        if not tool_call_id:
+            return {
+                "results": [{
+                    "toolCallId": "unknown",
+                    "error": "Missing tool call ID"
+                }]
+            }
+        
+        if not tool_name:
+            return {
+                "results": [{
+                    "toolCallId": tool_call_id,
+                    "error": "No tool call found"
+                }]
+            }
+        
+        # For research tools, provide immediate response with actual research
+        if tool_name == "quick_research":
+            query = tool_parameters.get("query", "unknown topic")
+            
+            # Make a VERY fast research call with short timeout
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        "http://localhost:8082/quick-research",
+                        json={
+                            "query": query,
+                            "research_type": "quick",
+                            "max_sources": 1  # Reduced for speed
+                        },
+                        timeout=3.0  # Very short timeout
+                    )
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        summary = result.get("summary", "")
+                        source = result.get("source", "")
+                        
+                        # Format as single-line string (VAPI requirement - no line breaks)
+                        formatted_result = f"Based on my research on '{query}', here's what I found: {summary}"
+                        if source:
+                            formatted_result += f" (Source: {source})"
+                        
+                        # Use VAPI's exact required format
+                        vapi_response = {
+                            "results": [{
+                                "toolCallId": tool_call_id,
+                                "result": formatted_result
+                            }]
+                        }
+                        
+                        print(f"⚡ Fast research completed for: {query}")
+                        return vapi_response
+                        
+            except Exception as e:
+                print(f"⚠️ Fast research failed, using fallback: {e}")
+            
+            # Fallback if research fails or times out
+            return {
+                "results": [{
+                    "toolCallId": tool_call_id,
+                    "result": f"I'm researching '{query}' for you. Please give me a moment to gather the information."
+                }]
+            }
+        
+        # For other tools, return generic fast response
+        return {
+            "results": [{
+                "toolCallId": tool_call_id,
+                "result": f"Processing your {tool_name} request..."
+            }]
+        }
+        
+    except Exception as e:
+        print(f"❌ Fast webhook error: {e}")
+        return {
+            "results": [{
+                "toolCallId": tool_call_id or "unknown",
+                "error": f"Fast webhook error: {str(e)}"
+            }]
+        }
+
 @app.post("/webhook/{path:path}")
 async def catch_all_webhook(request: Request, path: str):
     """Catch any webhook calls that might not be going to /webhook/tool-call"""
@@ -2234,6 +2695,206 @@ async def configure_langgraph_service(user_id: int, service_url: str = "http://l
     )
     
     return await configure_user_service(user_id, service_config)
+
+@app.post("/api/users/{user_id}/services")
+async def configure_user_service(user_id: int, service_config: dict):
+    """
+    Configure service endpoints for a user's tools
+    
+    Example payload:
+    {
+        "langgraph": "http://localhost:8082",
+        "quick_research_service": "http://custom-research.com/api/quick",
+        "generate_content_service": "http://content-gen.com/generate"
+    }
+    """
+    try:
+        with sqlite3.connect('vapi_forge.db') as conn:
+            cursor = conn.cursor()
+            
+            # Update or insert service configurations
+            for service_name, service_url in service_config.items():
+                cursor.execute("""
+                    INSERT OR REPLACE INTO user_services (user_id, service_name, service_url, created_at)
+                    VALUES (?, ?, ?, ?)
+                """, (user_id, service_name, service_url, datetime.utcnow().isoformat()))
+            
+            conn.commit()
+            
+        return {
+            "message": f"Service configuration updated for user {user_id}",
+            "services_configured": list(service_config.keys())
+        }
+        
+    except Exception as e:
+        logger.error("Failed to configure user services", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to configure services: {str(e)}")
+
+@app.get("/api/users/{user_id}/services")
+async def get_user_services(user_id: int):
+    """Get all configured services for a user"""
+    try:
+        with sqlite3.connect('vapi_forge.db') as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT service_name, service_url, created_at 
+                FROM user_services 
+                WHERE user_id = ?
+                ORDER BY service_name
+            """, (user_id,))
+            
+            services = cursor.fetchall()
+            
+        return {
+            "user_id": user_id,
+            "services": [
+                {
+                    "service_name": service[0],
+                    "service_url": service[1],
+                    "created_at": service[2]
+                }
+                for service in services
+            ]
+        }
+        
+    except Exception as e:
+        logger.error("Failed to get user services", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to get services: {str(e)}")
+
+@app.delete("/api/users/{user_id}/services/{service_name}")
+async def delete_user_service(user_id: int, service_name: str):
+    """Delete a specific service configuration for a user"""
+    try:
+        with sqlite3.connect('vapi_forge.db') as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                DELETE FROM user_services 
+                WHERE user_id = ? AND service_name = ?
+            """, (user_id, service_name))
+            
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Service configuration not found")
+            
+            conn.commit()
+            
+        return {"message": f"Service '{service_name}' deleted for user {user_id}"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to delete user service", user_id=user_id, service_name=service_name, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to delete service: {str(e)}")
+
+@app.get("/api/service-routing-docs")
+async def service_routing_documentation():
+    """
+    Documentation for dynamic service routing configuration
+    """
+    return {
+        "title": "Dynamic Service Routing Configuration",
+        "description": "Configure custom service endpoints for different tools per user",
+        "configuration_options": {
+            "default_services": {
+                "langgraph": "http://localhost:8082",
+                "description": "Default LangGraph service for all tools"
+            },
+            "tool_specific_services": {
+                "quick_research_service": "http://custom-research.com/api/quick",
+                "comprehensive_research_service": "http://research-pro.com/comprehensive",
+                "generate_content_service": "http://content-gen.com/generate",
+                "description": "Override specific tools to use custom services"
+            }
+        },
+        "api_endpoints": {
+            "configure_services": {
+                "method": "POST",
+                "url": "/api/users/{user_id}/services",
+                "example_payload": {
+                    "langgraph": "http://localhost:8082",
+                    "quick_research_service": "http://custom-research.com/api/quick",
+                    "generate_content_service": "http://content-gen.com/generate"
+                }
+            },
+            "get_services": {
+                "method": "GET", 
+                "url": "/api/users/{user_id}/services"
+            },
+            "delete_service": {
+                "method": "DELETE",
+                "url": "/api/users/{user_id}/services/{service_name}"
+            }
+        },
+        "routing_logic": {
+            "1": "Check if user has configured '{tool_name}_service' (e.g., 'quick_research_service')",
+            "2": "If found, use that custom service URL and endpoint",
+            "3": "If not found, use default LangGraph service with standard endpoint mapping",
+            "4": "If tool is unknown, fallback to '/vapi-webhook' endpoint"
+        },
+        "supported_tools": [
+            "quick_research",
+            "comprehensive_research", 
+            "generate_content"
+        ],
+        "examples": {
+            "scenario_1": {
+                "description": "Use default LangGraph for all tools",
+                "config": {
+                    "langgraph": "http://localhost:8082"
+                },
+                "result": "All tools route to LangGraph service"
+            },
+            "scenario_2": {
+                "description": "Custom research service, default content generation",
+                "config": {
+                    "langgraph": "http://localhost:8082",
+                    "quick_research_service": "http://research-api.com/quick",
+                    "comprehensive_research_service": "http://research-api.com/comprehensive"
+                },
+                "result": "Research tools use custom service, content generation uses LangGraph"
+            },
+            "scenario_3": {
+                "description": "Completely custom services",
+                "config": {
+                    "quick_research_service": "http://research.com/api/quick",
+                    "comprehensive_research_service": "http://research.com/api/comprehensive", 
+                    "generate_content_service": "http://content.com/generate"
+                },
+                "result": "Each tool uses its own dedicated service"
+            }
+        }
+    }
+
+@app.get("/users/{user_id}/tool-configurations")
+async def get_user_tool_configurations(user_id: int):
+    """Get all stored tool configurations for a user"""
+    try:
+        conn = sqlite3.connect('vapi_forge.db')
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT tool_name, http_method, endpoint_url, action_config, created_at
+            FROM tool_configurations WHERE user_id = ? ORDER BY tool_name
+        ''', (user_id,))
+        
+        configs = cursor.fetchall()
+        conn.close()
+        
+        return {
+            "tool_configurations": [
+                {
+                    "tool_name": config[0],
+                    "http_method": config[1],
+                    "endpoint_url": config[2],
+                    "action_config": json.loads(config[3]) if config[3] else {},
+                    "created_at": config[4]
+                }
+                for config in configs
+            ],
+            "status": "success"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get tool configurations: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(

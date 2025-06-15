@@ -1,0 +1,172 @@
+assistant:
+  name: "Advanced Research & Analytics Assistant"
+  model:
+    provider: "openai"
+    model: "gpt-4o-mini"
+    messages:
+      - role: "system"
+        content: |
+          You are an advanced AI research assistant with access to powerful research, content generation, and job analytics tools. 
+          Your primary role is to help users conduct thorough research on any topic, generate high-quality content, and provide system analytics.
+          
+          CRITICAL INSTRUCTIONS:
+          1. When users ask for research on any topic, use the appropriate research tool
+          2. For quick questions or basic research, use 'quick_research'
+          3. For in-depth analysis or comprehensive research, use 'comprehensive_research'
+          4. For content creation requests, use 'generate_content'
+          5. For job statistics, system analytics, or performance metrics, use 'job_analytics'
+          6. Always provide detailed and helpful responses based on the tool results
+          7. If a tool call fails, explain what went wrong and offer alternatives
+          
+          TOOL USAGE GUIDELINES:
+          - quick_research: For fast answers, current events, simple facts
+          - comprehensive_research: For detailed analysis, academic research, complex topics
+          - generate_content: For creating articles, summaries, creative content
+          - job_analytics: For system statistics, job counts, success rates, performance metrics
+          
+          JOB ANALYTICS EXAMPLES:
+          - "How many jobs are in the system?" → use job_analytics with query_type: "total_jobs"
+          - "What's the success rate?" → use job_analytics with query_type: "success_rate"
+          - "Show me recent activity" → use job_analytics with query_type: "recent_activity"
+          - "System health status?" → use job_analytics with query_type: "system_health"
+          
+          Remember: You have access to real-time research capabilities and system analytics. Use them effectively!
+  voice:
+    provider: "playht"
+    voiceId: "jennifer-playht"
+  firstMessage: "Hello! I'm your advanced research and analytics assistant. I can help you research any topic, analyze information, generate content, and provide system analytics. What would you like to explore today?"
+
+tools:
+  - name: "quick_research"
+    description: "Perform quick research on a topic to get immediate answers and basic information"
+    parameters:
+      type: "object"
+      properties:
+        query:
+          type: "string"
+          description: "The research query or question to investigate"
+        focus_area:
+          type: "string"
+          description: "Optional focus area to narrow down the research (e.g., 'recent developments', 'statistics', 'overview')"
+        max_sources:
+          type: "integer"
+          description: "Maximum number of sources to consult (default: 2)"
+          default: 2
+      required: ["query"]
+    action:
+      method: "POST"
+      url: "https://ba54-2603-8000-ba00-34c9-2046-d24b-6925-bbb0.ngrok-free.app/webhook/tool-call"
+      json_body:
+        tool_name: "quick_research"
+        parameters:
+          query: "{query}"
+          focus_area: "{focus_area}"
+          max_sources: "{max_sources}"
+
+  - name: "comprehensive_research"
+    description: "Conduct comprehensive, in-depth research on complex topics with multiple sources and detailed analysis"
+    parameters:
+      type: "object"
+      properties:
+        topic:
+          type: "string"
+          description: "The main topic or subject to research comprehensively"
+        research_depth:
+          type: "string"
+          description: "Depth of research: 'standard', 'comprehensive', or 'expert'"
+          enum: ["standard", "comprehensive", "expert"]
+          default: "comprehensive"
+        specific_questions:
+          type: "array"
+          items:
+            type: "string"
+          description: "Specific questions to address during research"
+        include_statistics:
+          type: "boolean"
+          description: "Whether to include statistical data and metrics"
+          default: true
+      required: ["topic"]
+    action:
+      method: "POST"
+      url: "https://ba54-2603-8000-ba00-34c9-2046-d24b-6925-bbb0.ngrok-free.app/webhook/tool-call"
+      json_body:
+        tool_name: "comprehensive_research"
+        parameters:
+          topic: "{topic}"
+          research_depth: "{research_depth}"
+          specific_questions: "{specific_questions}"
+          include_statistics: "{include_statistics}"
+
+  - name: "generate_content"
+    description: "Generate high-quality content such as articles, summaries, reports, or creative writing"
+    parameters:
+      type: "object"
+      properties:
+        content_type:
+          type: "string"
+          description: "Type of content to generate"
+          enum: ["article", "summary", "report", "blog_post", "creative_writing", "analysis"]
+        topic:
+          type: "string"
+          description: "The main topic or subject for content generation"
+        tone:
+          type: "string"
+          description: "Tone of the content"
+          enum: ["professional", "casual", "academic", "creative", "technical"]
+          default: "professional"
+        length:
+          type: "string"
+          description: "Desired length of content"
+          enum: ["short", "medium", "long", "comprehensive"]
+          default: "medium"
+        target_audience:
+          type: "string"
+          description: "Target audience for the content"
+        key_points:
+          type: "array"
+          items:
+            type: "string"
+          description: "Key points or themes to include in the content"
+      required: ["content_type", "topic"]
+    action:
+      method: "POST"
+      url: "https://ba54-2603-8000-ba00-34c9-2046-d24b-6925-bbb0.ngrok-free.app/webhook/tool-call"
+      json_body:
+        tool_name: "generate_content"
+        parameters:
+          content_type: "{content_type}"
+          topic: "{topic}"
+          tone: "{tone}"
+          length: "{length}"
+          target_audience: "{target_audience}"
+          key_points: "{key_points}"
+
+  - name: "job_analytics"
+    description: "Get comprehensive job statistics, system analytics, and performance metrics from the LangGraph Forge system"
+    parameters:
+      type: "object"
+      properties:
+        query_type:
+          type: "string"
+          description: "Type of analytics query to perform"
+          enum: ["total_jobs", "job_status", "success_rate", "recent_activity", "job_breakdown", "system_health", "analytics_summary"]
+        status_filter:
+          type: "string"
+          description: "Filter jobs by status (optional)"
+          enum: ["completed", "failed", "running", "processing", "all"]
+        request_type_filter:
+          type: "string"
+          description: "Filter jobs by request type (optional)"
+          enum: ["research", "content_generation", "vapi_research", "quick_research", "all"]
+        time_period:
+          type: "string"
+          description: "Time period for analytics (optional, defaults to all)"
+          enum: ["24h", "7d", "30d", "all"]
+        limit:
+          type: "integer"
+          description: "Maximum number of results to return (optional)"
+          default: 20
+      required: ["query_type"]
+    action:
+      method: "GET"
+      url: "https://ba54-2603-8000-ba00-34c9-2046-d24b-6925-bbb0.ngrok-free.app/webhook/tool-call" 
