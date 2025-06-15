@@ -1,0 +1,111 @@
+assistant:
+  name: "Enterprise Research Assistant"
+  model:
+    provider: "openai"
+    model: "gpt-4"
+    system_prompt_template: |
+      You are an enterprise research assistant with access to proprietary research and content generation services.
+      You can help with market research, competitive analysis, content creation, and data insights.
+      Always provide accurate, well-sourced information and cite your sources when possible.
+  voice:
+    provider: "playht"
+    voiceId: "jennifer-playht"
+  firstMessage: "Hello! I'm your enterprise research assistant. I can help you with research, analysis, and content generation using our proprietary services. What would you like to explore today?"
+
+tools:
+  # Using service:// URLs for automatic service discovery
+  - name: "research_topic"
+    description: "Conduct comprehensive research using enterprise research service"
+    parameters:
+      type: "object"
+      properties:
+        query:
+          type: "string"
+          description: "Research query or topic"
+        research_type:
+          type: "string"
+          enum: ["market", "competitive", "academic", "technical"]
+          description: "Type of research to conduct"
+        depth:
+          type: "string"
+          enum: ["quick", "standard", "comprehensive"]
+          description: "Research depth level"
+      required: ["query"]
+    action:
+      type: "api_call"
+      method: "POST"
+      url: "service://research/analyze"  # Resolves to company's research service
+      json_body:
+        query: "{query}"
+        type: "{research_type}"
+        depth: "{depth}"
+      response_template: "Research completed on {query}. Analysis: {response.summary}"
+
+  # Using environment variable substitution
+  - name: "generate_content"
+    description: "Generate enterprise content using proprietary content service"
+    parameters:
+      type: "object"
+      properties:
+        topic:
+          type: "string"
+          description: "Content topic"
+        content_type:
+          type: "string"
+          enum: ["report", "summary", "presentation", "email"]
+          description: "Type of content to generate"
+        audience:
+          type: "string"
+          enum: ["executive", "technical", "general"]
+          description: "Target audience"
+      required: ["topic", "content_type"]
+    action:
+      type: "api_call"
+      method: "POST"
+      url: "${CONTENT_SERVICE_URL}/generate"  # Resolves from environment variable
+      json_body:
+        topic: "{topic}"
+        type: "{content_type}"
+        audience: "{audience}"
+      response_template: "Generated {content_type} on {topic}: {response.content}"
+
+  # Using direct URL for external service
+  - name: "market_data"
+    description: "Get real-time market data from external provider"
+    parameters:
+      type: "object"
+      properties:
+        symbol:
+          type: "string"
+          description: "Stock symbol or market identifier"
+        data_type:
+          type: "string"
+          enum: ["price", "volume", "analysis"]
+          description: "Type of market data"
+      required: ["symbol"]
+    action:
+      type: "api_call"
+      method: "GET"
+      url: "https://api.marketdata.company.com/v1/data/{symbol}"  # Direct external URL
+      response_template: "Market data for {symbol}: {response.data}"
+
+  # Using service discovery with fallback
+  - name: "workflow_automation"
+    description: "Trigger automated workflows in enterprise systems"
+    parameters:
+      type: "object"
+      properties:
+        workflow_name:
+          type: "string"
+          description: "Name of the workflow to trigger"
+        parameters:
+          type: "object"
+          description: "Workflow parameters"
+      required: ["workflow_name"]
+    action:
+      type: "api_call"
+      method: "POST"
+      url: "service://workflow/trigger/{workflow_name}"  # Resolves to workflow service
+      json_body:
+        params: "{parameters}"
+      response_template: "Workflow {workflow_name} triggered successfully: {response.status}" 

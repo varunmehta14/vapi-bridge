@@ -1,0 +1,76 @@
+assistant:
+  name: "My Company's Voice Assistant"
+  model:
+    provider: "openai"
+    model: "gpt-4"
+    system_prompt_template: |
+      You are a voice assistant for My Company. You have access to our proprietary research and workflow systems.
+      Help users with research queries and business process automation using our internal APIs.
+      Always be professional and accurate in your responses.
+  voice:
+    provider: "playht"
+    voiceId: "jennifer-playht"
+  firstMessage: "Hello! I'm your company's voice assistant. I can help you with research and workflow automation. What can I do for you today?"
+
+tools:
+  # This tool uses the user's configured "my_research_api" service
+  - name: "company_research"
+    description: "Research topics using our proprietary research API"
+    parameters:
+      type: "object"
+      properties:
+        query:
+          type: "string"
+          description: "Research query or topic"
+        depth:
+          type: "string"
+          enum: ["quick", "detailed", "comprehensive"]
+          description: "Research depth level"
+      required: ["query"]
+    action:
+      type: "api_call"
+      method: "POST"
+      url: "service://my_research_api/research"  # This resolves to user's configured URL
+      json_body:
+        query: "{query}"
+        depth: "{depth}"
+        company_context: true
+      response_template: "Research completed on {query}: {response.summary}"
+
+  # This tool uses another service the user might configure
+  - name: "workflow_automation"
+    description: "Trigger company workflows"
+    parameters:
+      type: "object"
+      properties:
+        workflow_name:
+          type: "string"
+          description: "Name of the workflow to trigger"
+        parameters:
+          type: "object"
+          description: "Workflow parameters"
+      required: ["workflow_name"]
+    action:
+      type: "api_call"
+      method: "POST"
+      url: "service://workflow_engine/trigger/{workflow_name}"  # User configures "workflow_engine" service
+      json_body:
+        params: "{parameters}"
+        user_context: "voice_assistant"
+      response_template: "Workflow {workflow_name} has been triggered: {response.status}"
+
+  # This tool uses a third service for customer data
+  - name: "customer_lookup"
+    description: "Look up customer information"
+    parameters:
+      type: "object"
+      properties:
+        customer_id:
+          type: "string"
+          description: "Customer ID or email"
+      required: ["customer_id"]
+    action:
+      type: "api_call"
+      method: "GET"
+      url: "service://customer_api/customers/{customer_id}"  # User configures "customer_api" service
+      response_template: "Customer found: {response.name} - Status: {response.status}" 

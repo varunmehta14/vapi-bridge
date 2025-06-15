@@ -11,6 +11,11 @@ import asyncio
 import httpx
 from typing import Dict, Any, Optional
 import yaml
+import sqlite3
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 class VapiOrchestrator:
     """Handles creation and management of Vapi assistants"""
@@ -41,6 +46,8 @@ class VapiOrchestrator:
         """
         config = self.load_config()
         assistant_config = config["assistant"]
+        
+        print(f"✅ Loaded config with {len(config['tools'])} tools")
         
         # First, create tools separately
         tool_ids = []
@@ -76,48 +83,81 @@ class VapiOrchestrator:
                     # Continue with other tools
                     continue
         
+        print(f"✅ Created {len(tool_ids)} tools successfully")
+        
+        # Get system prompt from messages array or fallback to system_prompt_template
+        system_prompt = "You are a helpful AI assistant."  # Default fallback
+        
+        if "messages" in assistant_config["model"]:
+            # Extract from messages array (new format)
+            for message in assistant_config["model"]["messages"]:
+                if message.get("role") == "system":
+                    system_prompt = message.get("content", system_prompt)
+                    break
+        elif "system_prompt_template" in assistant_config["model"]:
+            # Fallback to old format
+            system_prompt = assistant_config["model"]["system_prompt_template"]
+        
+        # Replace {user_id} placeholder
+        system_prompt = system_prompt.replace("{user_id}", str(user_id))
+        
         # Prepare the assistant configuration with shorter name
         assistant_name = f"Tesseract AI - {user_id[:10]}"  # Keep it under 40 chars
         vapi_assistant = {
             "name": assistant_name,
-            "model": assistant_config["model"].copy(),
+            "model": {
+                "provider": assistant_config["model"]["provider"],
+                "model": assistant_config["model"]["model"],
+                "messages": [{
+                    "role": "system",
+                    "content": system_prompt
+                }]
+            },
             "voice": assistant_config["voice"],
             "firstMessage": assistant_config["firstMessage"]
         }
-        
-        # Format system prompt with user_id
-        if "system_prompt_template" in assistant_config["model"]:
-            system_prompt = assistant_config["model"]["system_prompt_template"].format(user_id=user_id)
-            vapi_assistant["model"]["systemPrompt"] = system_prompt
-            # Remove the template field as Vapi expects systemPrompt
-            del vapi_assistant["model"]["system_prompt_template"]
         
         # Add tool IDs to the model (not inline tools)
         if tool_ids:
             vapi_assistant["model"]["toolIds"] = tool_ids
         
+        print(f"🔍 VAPI Assistant Config:")
+        print(f"   Name: {vapi_assistant['name']}")
+        print(f"   Model: {vapi_assistant['model']['model']}")
+        print(f"   Tool IDs: {len(tool_ids)}")
+        print(f"   System Prompt: {system_prompt[:100]}...")
+        
         # Create the assistant via Vapi API
         async with httpx.AsyncClient() as client:
             try:
+                print(f"🚀 Creating VAPI assistant...")
                 response = await client.post(
                     f"{self.base_url}/assistant",
                     headers=self.headers,
                     json=vapi_assistant,
                     timeout=30.0
                 )
-                response.raise_for_status()
-                return response.json()
                 
-            except httpx.HTTPError as e:
-                # Get detailed error information
-                if hasattr(e, 'response') and e.response is not None:
-                    try:
-                        error_body = e.response.text
-                        print(f"📋 Response status: {e.response.status_code}")
-                        print(f"📋 Response body: {error_body}")
-                    except:
-                        pass
-                raise Exception(f"Failed to create Vapi assistant: {str(e)}")
+                print(f"📡 VAPI API Response: {response.status_code}")
+                
+                if response.status_code == 201:
+                    result = response.json()
+                    
+                    print(f"✅ SUCCESS! Assistant created:")
+                    print(f"   Assistant ID: {result['id']}")
+                    print(f"   Name: {result['name']}")
+                    print(f"   Tool IDs: {len(tool_ids)}")
+                    
+                    return result
+                    
+                else:
+                    print(f"❌ VAPI API Error: {response.status_code}")
+                    print(f"   Response: {response.text}")
+                    return None
+                    
+            except Exception as e:
+                print(f"❌ Exception: {str(e)}")
+                return None
     
     async def get_assistant(self, assistant_id: str) -> Dict[str, Any]:
         """
@@ -156,21 +196,7 @@ class VapiOrchestrator:
         config = self.load_config()
         assistant_config = config["assistant"]
         
-        # Prepare the updated configuration (same as create but as update)
-        vapi_assistant = {
-            "name": f"{assistant_config['name']} - {user_id}",
-            "model": assistant_config["model"],
-            "voice": assistant_config["voice"],
-            "firstMessage": assistant_config["firstMessage"]
-        }
-        
-        # Format system prompt with user_id
-        if "system_prompt_template" in assistant_config["model"]:
-            system_prompt = assistant_config["model"]["system_prompt_template"].format(user_id=user_id)
-            vapi_assistant["model"]["systemPrompt"] = system_prompt
-            del vapi_assistant["model"]["system_prompt_template"]
-        
-        # Convert tools to Vapi format
+        # Convert our YAML tools to Vapi format (handling the new structure with actions)
         vapi_tools = []
         for tool in config["tools"]:
             vapi_tool = {
@@ -183,7 +209,40 @@ class VapiOrchestrator:
             }
             vapi_tools.append(vapi_tool)
         
-        vapi_assistant["tools"] = vapi_tools
+        # Get system prompt from messages array or fallback to system_prompt_template
+        system_prompt = "You are a helpful AI assistant."  # Default fallback
+        
+        if "messages" in assistant_config["model"]:
+            # Extract from messages array (new format)
+            for message in assistant_config["model"]["messages"]:
+                if message.get("role") == "system":
+                    system_prompt = message.get("content", system_prompt)
+                    break
+        elif "system_prompt_template" in assistant_config["model"]:
+            # Fallback to old format
+            system_prompt = assistant_config["model"]["system_prompt_template"]
+        
+        # Replace {user_id} placeholder
+        system_prompt = system_prompt.replace("{user_id}", str(user_id))
+        
+        # Prepare the updated configuration (using working format)
+        vapi_assistant = {
+            "name": f"{assistant_config['name']} - {user_id}",
+            "model": {
+                "provider": assistant_config["model"]["provider"],
+                "model": assistant_config["model"]["model"],
+                "messages": [{
+                    "role": "system",
+                    "content": system_prompt
+                }],
+                "tools": vapi_tools  # Tools inside model object
+            },
+            "voice": assistant_config["voice"],
+            "firstMessage": assistant_config["firstMessage"],
+            "server": {
+                "url": f"{self.public_server_url}/webhook/tool-call"
+            }
+        }
         
         async with httpx.AsyncClient() as client:
             try:
@@ -288,40 +347,54 @@ class VapiOrchestrator:
 async def main():
     """
     Main function to demonstrate the orchestrator
-    You'll need to set the VAPI_API_KEY and PUBLIC_SERVER_URL environment variables
+    Uses database to get VAPI API key like the working example
     """
-    # Get environment variables
-    vapi_api_key = os.getenv("VAPI_API_KEY")
-    public_server_url = os.getenv("PUBLIC_SERVER_URL", "https://your-ngrok-url.ngrok.io")
+    # Set PUBLIC_SERVER_URL
+    PUBLIC_SERVER_URL = "https://d6c5-2603-8000-baf0-4690-4c7d-38bd-11e8-5920.ngrok-free.app"
     
-    if not vapi_api_key:
-        print("❌ VAPI_API_KEY environment variable is required")
-        print("   Set it with: export VAPI_API_KEY='your_vapi_api_key_here'")
+    # Get VAPI API key from database (like the working example)
+    try:
+        conn = sqlite3.connect('vapi_forge.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT vapi_api_key FROM users WHERE id = ?", (4,))
+        result = cursor.fetchone()
+        conn.close()
+        
+        if not result or not result[0]:
+            print("❌ No VAPI API key found for user 4")
+            return
+        
+        vapi_api_key = result[0]
+        print(f"✅ Found VAPI API key from database")
+        
+    except Exception as e:
+        print(f"❌ Database error: {str(e)}")
         return
     
-    if "localhost" in public_server_url:
-        print("⚠️  Warning: PUBLIC_SERVER_URL appears to be localhost")
-        print("   For Vapi webhooks to work, you need a public URL (ngrok)")
-        print("   Set it with: export PUBLIC_SERVER_URL='https://your-ngrok-url.ngrok.io'")
-    
     print(f"🚀 Initializing Vapi Orchestrator...")
-    print(f"📡 Public Server URL: {public_server_url}")
+    print(f"📡 Public Server URL: {PUBLIC_SERVER_URL}")
     
-    orchestrator = VapiOrchestrator(vapi_api_key, public_server_url)
+    orchestrator = VapiOrchestrator(vapi_api_key, PUBLIC_SERVER_URL)
     
     try:
-        # Example: Create an assistant for a demo user
-        print(f"\n🔨 Creating assistant for demo user...")
-        user_id = "demo_user_123"
+        # Create an assistant for a demo user
+        print(f"\n🔨 Creating assistant...")
+        user_id = "orchestrator_test"
         assistant = await orchestrator.create_assistant(user_id)
         
-        print(f"✅ Assistant created successfully!")
-        print(f"   Assistant ID: {assistant.get('id')}")
-        print(f"   Name: {assistant.get('name')}")
+        if assistant:
+            print(f"✅ Assistant created successfully!")
+            print(f"   Assistant ID: {assistant.get('id')}")
+            print(f"   Name: {assistant.get('name')}")
+            
+            print(f"\n🎯 Check VAPI Dashboard:")
+            print(f"   Go to: https://dashboard.vapi.ai")
+            print(f"   Find assistant: {assistant.get('id')}")
         
         # List all assistants
         print(f"\n📋 Listing all assistants...")
-        assistants = await orchestrator.list_assistants()
+        assistants_response = await orchestrator.list_assistants()
+        assistants = assistants_response if isinstance(assistants_response, list) else assistants_response.get('data', [])
         print(f"   Found {len(assistants)} assistant(s)")
         
         for asst in assistants:

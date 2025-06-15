@@ -1,67 +1,51 @@
 #!/usr/bin/env python3
-"""Debug script to check Vapi API request payload"""
-
-import json
+import asyncio
 import yaml
+import json
+import sqlite3
+import os
+from dotenv import load_dotenv
 
-def debug_vapi_payload():
-    # Load config
-    with open('config.yaml', 'r') as f:
+# Load environment variables
+load_dotenv()
+
+# Set PUBLIC_SERVER_URL
+os.environ["PUBLIC_SERVER_URL"] = "https://d6c5-2603-8000-baf0-4690-4c7d-38bd-11e8-5920.ngrok-free.app"
+
+# Import the function we want to test
+from main import create_vapi_assistant_from_config
+
+async def test_vapi_creation():
+    print("🔍 Testing VAPI assistant creation...")
+    
+    # Get user's VAPI API key from database
+    conn = sqlite3.connect('vapi_forge.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT vapi_api_key FROM users WHERE id = ?", (4,))
+    result = cursor.fetchone()
+    conn.close()
+    
+    if not result or not result[0]:
+        print("❌ No VAPI API key found for user 4")
+        return
+    
+    user_vapi_key = result[0]
+    print(f"✅ Found VAPI API key (length: {len(user_vapi_key)})")
+    
+    # Load simple test config
+    with open('simple_test.yaml', 'r') as f:
         config = yaml.safe_load(f)
     
-    user_id = 'demo_user_123'
-    assistant_config = config['assistant']
+    print(f"✅ Loaded config: {json.dumps(config, indent=2)}")
     
-    # Build the assistant payload like the orchestrator does
-    vapi_assistant = {
-        'name': f"{assistant_config['name']} - {user_id}",
-        'model': assistant_config['model'].copy(),
-        'voice': assistant_config['voice'],
-        'firstMessage': assistant_config['firstMessage']
-    }
-    
-    # Handle system prompt
-    if 'system_prompt_template' in assistant_config['model']:
-        system_prompt = assistant_config['model']['system_prompt_template'].format(user_id=user_id)
-        vapi_assistant['model']['systemPrompt'] = system_prompt
-        del vapi_assistant['model']['system_prompt_template']
-    
-    # Convert tools
-    vapi_tools = []
-    for tool in config['tools']:
-        vapi_tool = {
-            'type': 'function',
-            'function': {
-                'name': tool['name'],
-                'description': tool['description'],
-                'parameters': tool['parameters']
-            }
-        }
-        vapi_tools.append(vapi_tool)
-    
-    vapi_assistant['tools'] = vapi_tools
-    vapi_assistant['server'] = {
-        'url': 'https://6dcc-2603-8000-baf0-4690-4103-a158-bc73-6888.ngrok-free.app/webhook/tool-call'
-    }
-    
-    print('📋 Request payload that would be sent to Vapi:')
-    print(json.dumps(vapi_assistant, indent=2))
-    print('\n🔍 Checking for common issues...')
-    
-    # Check for common issues
-    if 'systemPrompt' not in vapi_assistant['model']:
-        print('⚠️  Missing systemPrompt in model')
-    
-    if not vapi_assistant['tools']:
-        print('⚠️  No tools defined')
-    
-    for i, tool in enumerate(vapi_assistant['tools']):
-        if 'type' not in tool:
-            print(f'⚠️  Tool {i}: Missing type')
-        if 'function' not in tool:
-            print(f'⚠️  Tool {i}: Missing function')
-        elif 'parameters' not in tool['function']:
-            print(f'⚠️  Tool {i}: Missing parameters in function')
+    try:
+        # Test the function directly
+        result = await create_vapi_assistant_from_config(config, user_vapi_key, 4)
+        print(f"✅ Success! Assistant created: {result}")
+    except Exception as e:
+        print(f"❌ Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
-    debug_vapi_payload() 
+    asyncio.run(test_vapi_creation()) 

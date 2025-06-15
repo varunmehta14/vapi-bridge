@@ -1,0 +1,99 @@
+assistant:
+  name: "Customer Support Assistant"
+  model:
+    provider: "openai"
+    model: "gpt-3.5-turbo"
+    system_prompt_template: |
+      You are a friendly and helpful customer support assistant. Your goal is to help customers with their questions,
+      resolve issues, and provide excellent service. Always be polite, empathetic, and solution-oriented.
+      If you cannot resolve an issue, escalate it appropriately.
+  voice:
+    provider: "playht"
+    voiceId: "jennifer"
+  firstMessage: "Hello! I'm here to help you with any questions or issues you might have. How can I assist you today?"
+
+tools:
+  - name: "check_order_status"
+    description: "Check the status of a customer's order"
+    parameters:
+      type: "object"
+      properties:
+        order_id:
+          type: "string"
+          description: "The order ID to check"
+        email:
+          type: "string"
+          description: "Customer's email address"
+      required: ["order_id"]
+    action:
+      method: "GET"
+      url: "http://localhost:8000/orders/{order_id}/status"
+      response_format: |
+        Order Status for #{order_id}:
+        
+        Status: {response.status}
+        Estimated Delivery: {response.estimated_delivery}
+        Tracking Number: {response.tracking_number}
+        
+        {response.notes}
+
+  - name: "create_support_ticket"
+    description: "Create a support ticket for customer issues"
+    parameters:
+      type: "object"
+      properties:
+        customer_email:
+          type: "string"
+          description: "Customer's email address"
+        issue_type:
+          type: "string"
+          enum: ["billing", "technical", "product", "shipping", "other"]
+          description: "Type of issue"
+        description:
+          type: "string"
+          description: "Description of the issue"
+        priority:
+          type: "string"
+          enum: ["low", "medium", "high", "urgent"]
+          description: "Priority level"
+      required: ["customer_email", "issue_type", "description"]
+    action:
+      method: "POST"
+      url: "http://localhost:8000/support/tickets"
+      json_body:
+        email: "{customer_email}"
+        type: "{issue_type}"
+        description: "{description}"
+        priority: "{priority}"
+      response_format: |
+        Support ticket created successfully!
+        
+        Ticket ID: {response.ticket_id}
+        Priority: {response.priority}
+        Expected Response Time: {response.response_time}
+        
+        We'll get back to you soon at {customer_email}
+
+  - name: "search_knowledge_base"
+    description: "Search the knowledge base for answers to common questions"
+    parameters:
+      type: "object"
+      properties:
+        query:
+          type: "string"
+          description: "Search query for the knowledge base"
+        category:
+          type: "string"
+          enum: ["billing", "technical", "product", "shipping", "account"]
+          description: "Category to search in"
+      required: ["query"]
+    action:
+      method: "GET"
+      url: "http://localhost:8000/kb/search?q={query}&category={category}"
+      response_format: |
+        Knowledge Base Results:
+        
+        {response.answer}
+        
+        Related Articles:
+        {response.related_articles} 

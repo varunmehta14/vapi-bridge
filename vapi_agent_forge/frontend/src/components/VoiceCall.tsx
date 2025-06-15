@@ -1,394 +1,499 @@
 'use client'
 
-import React, { useState, useEffect, useCallback, useRef } from 'react'
-import Vapi from '@vapi-ai/web'
+import React, { useEffect, useRef, useState } from 'react'
 
-interface VoiceCallProps {
-  assistantId?: string
-  publicKey?: string
-  onCallStart?: () => void
-  onCallEnd?: () => void
-  onTranscript?: (transcript: { role: string; content: string }) => void
+interface User {
+  id: number
+  username: string
 }
 
-interface CallStatus {
-  isConnected: boolean
-  isActive: boolean
-  isMuted: boolean
-  duration: number
-  status: string
+interface VoiceAgent {
+  id: number
+  name: string
+  vapi_assistant_id: string
+  agent_type: string
 }
 
-const VoiceCall: React.FC<VoiceCallProps> = ({
-  assistantId, // Remove default hardcoded ID
-  publicKey, // Will be fetched from backend if not provided
-  onCallStart,
-  onCallEnd,
-  onTranscript
-}) => {
-  const [vapi, setVapi] = useState<Vapi | null>(null)
-  const [callStatus, setCallStatus] = useState<CallStatus>({
-    isConnected: false,
-    isActive: false,
-    isMuted: false,
-    duration: 0,
-    status: 'idle'
-  })
-  const [transcript, setTranscript] = useState<Array<{ role: string; content: string; timestamp: Date }>>([])
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [volumeLevel, setVolumeLevel] = useState(0)
-  const [currentAssistantId, setCurrentAssistantId] = useState<string | null>(null)
+interface Message {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  timestamp: Date
+  type: 'transcript' | 'function-call' | 'system'
+}
 
-  // Add ref to track initialization
+const VoiceCall: React.FC = () => {
+  const vapiRef = useRef<any>(null)
   const isInitialized = useRef(false)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const [isCallActive, setIsCallActive] = useState(false)
+  const [callStatus, setCallStatus] = useState<string>('Ready')
+  const [user, setUser] = useState<User | null>(null)
+  const [voiceAgents, setVoiceAgents] = useState<VoiceAgent[]>([])
+  const [selectedAgent, setSelectedAgent] = useState<VoiceAgent | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [messages, setMessages] = useState<Message[]>([])
+  const [currentTranscript, setCurrentTranscript] = useState('')
+  const [isMuted, setIsMuted] = useState(false)
+  const [vapiError, setVapiError] = useState<string | null>(null)
 
-  // Fetch current assistant ID based on configuration
-  const fetchCurrentAssistantId = useCallback(async () => {
-    if (assistantId) return assistantId
+  // Auto-scroll to bottom when new messages arrive
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages])
+
+  useEffect(() => {
+    if (isInitialized.current) return
     
-    try {
-      const response = await fetch('http://localhost:8000/vapi/assistant/current')
-      const data = await response.json()
-      if (data.status === 'success') {
-        setCurrentAssistantId(data.assistant_id)
-        return data.assistant_id
-      }
-      throw new Error('Failed to get assistant ID')
-    } catch (error) {
-      console.error('Failed to fetch current assistant ID:', error)
-      throw new Error('Failed to get current assistant ID')
+    const userData = localStorage.getItem('user')
+    if (userData) {
+      const parsedUser = JSON.parse(userData)
+      setUser(parsedUser)
+      loadUserVoiceAgents(parsedUser.id)
     }
-  }, [assistantId])
-
-  // Fetch public key if not provided
-  const fetchPublicKey = useCallback(async () => {
-    if (publicKey) return publicKey
     
+    isInitialized.current = true
+  }, [])
+
+  // Initialize VAPI when user is loaded
+  useEffect(() => {
+    if (user && !vapiRef.current) {
+      initializeVapi()
+    }
+  }, [user])
+
+  const addMessage = (role: 'user' | 'assistant' | 'system', content: string, type: 'transcript' | 'function-call' | 'system' = 'transcript') => {
+    const newMessage: Message = {
+      id: Date.now().toString(),
+      role,
+      content,
+      timestamp: new Date(),
+      type
+    }
+    setMessages(prev => [...prev, newMessage])
+  }
+
+  const loadUserVoiceAgents = async (userId: number) => {
     try {
-      const response = await fetch('http://localhost:8000/vapi/public-key')
+      const response = await fetch(`http://localhost:8000/users/${userId}/voice-agents`)
       const data = await response.json()
-      return data.public_key
+      if (data.status === 'success' && data.voice_agents.length > 0) {
+        setVoiceAgents(data.voice_agents)
+        setSelectedAgent(data.voice_agents[0]) // Select first agent by default
+      }
     } catch (error) {
-      console.error('Failed to fetch public key:', error)
-      throw new Error('Failed to get Vapi public key')
+      console.error('Failed to load voice agents:', error)
+    } finally {
+      setIsLoading(false)
     }
-  }, [publicKey])
+  }
 
-  // Initialize Vapi
-  const initializeVapi = useCallback(async () => {
-    // Prevent re-initialization
-    if (isInitialized.current || vapi) {
-      return
-    }
-
+  const initializeVapi = async () => {
     try {
-      const key = publicKey || await fetchPublicKey()
-      if (!key) {
-        throw new Error('No public key available')
+      setVapiError(null) // Clear any previous errors
+      
+      if (!user) {
+        throw new Error('User not logged in')
       }
 
-      const vapiInstance = new Vapi(key)
+      // Get user's Vapi public key
+      const response = await fetch(`http://localhost:8000/users/${user.id}/vapi-public-key`)
+      
+      if (!response.ok) {
+        if (response.status === 400) {
+          throw new Error('VAPI public key not configured. Please add your VAPI public key in the login settings.')
+        }
+        throw new Error('Failed to get VAPI public key')
+      }
+      
+      const data = await response.json()
+      
+      if (!data.public_key) {
+        throw new Error('No Vapi public key available for this user. Please add your VAPI public key in settings.')
+      }
+
+      // Dynamically import Vapi
+      const { default: Vapi } = await import('@vapi-ai/web')
+      
+      vapiRef.current = new Vapi(data.public_key)
       
       // Set up event listeners
-      vapiInstance.on('call-start', () => {
+      vapiRef.current.on('call-start', () => {
         console.log('📞 Call started')
-        setCallStatus(prev => ({ 
-          ...prev, 
-          isActive: true, 
-          isConnected: true, 
-          status: 'active' 
-        }))
-        setIsLoading(false)
-        onCallStart?.()
+        setIsCallActive(true)
+        setCallStatus('Call Active')
+        setMessages([]) // Clear previous messages
+        addMessage('system', 'Call started', 'system')
+        logInteraction('call_started', 'Voice call initiated')
       })
 
-      vapiInstance.on('call-end', () => {
+      vapiRef.current.on('call-end', () => {
         console.log('📞 Call ended')
-        setCallStatus(prev => ({ 
-          ...prev, 
-          isActive: false, 
-          isConnected: false, 
-          status: 'ended' 
-        }))
-        setIsLoading(false)
-        onCallEnd?.()
+        setIsCallActive(false)
+        setCallStatus('Call Ended')
+        setCurrentTranscript('')
+        addMessage('system', 'Call ended', 'system')
+        logInteraction('call_ended', 'Voice call ended')
       })
 
-      vapiInstance.on('speech-start', () => {
+      vapiRef.current.on('speech-start', () => {
         console.log('🎤 User started speaking')
+        setCallStatus('User Speaking')
       })
 
-      vapiInstance.on('speech-end', () => {
+      vapiRef.current.on('speech-end', () => {
         console.log('🎤 User stopped speaking')
+        setCallStatus('Processing...')
       })
 
-      vapiInstance.on('volume-level', (level: number) => {
-        setVolumeLevel(level)
-      })
-
-      vapiInstance.on('message', (message: any) => {
-        console.log('💬 Message received:', message)
+      vapiRef.current.on('message', (message: any) => {
+        console.log('💬 Message:', message)
         
-        if (message.type === 'transcript' && message.transcript) {
-          const newTranscript = {
-            role: message.role || 'assistant',
-            content: message.transcript,
-            timestamp: new Date()
+        if (message.type === 'transcript') {
+          const content = message.transcript || message.text
+          if (content) {
+            if (message.transcriptType === 'partial') {
+              // Show live transcript for user
+              if (message.role === 'user') {
+                setCurrentTranscript(content)
+              }
+            } else if (message.transcriptType === 'final') {
+              // Add final transcript to messages
+              setCurrentTranscript('')
+              addMessage(message.role, content, 'transcript')
+              logInteraction('user_message', content)
+            }
           }
-          setTranscript(prev => [...prev, newTranscript])
-          onTranscript?.(newTranscript)
         }
         
         if (message.type === 'function-call') {
-          console.log('🔧 Function call:', message.functionCall)
+          const functionName = message.functionCall?.name || 'Unknown function'
+          const params = message.functionCall?.parameters || {}
+          const functionText = `🔧 Called: ${functionName}${Object.keys(params).length > 0 ? ` with ${JSON.stringify(params)}` : ''}`
+          addMessage('system', functionText, 'function-call')
+          logInteraction('function_call', functionText)
         }
       })
 
-      vapiInstance.on('error', (error: any) => {
+      vapiRef.current.on('error', (error: any) => {
         console.error('❌ Vapi error:', error)
-        setError(error.message || 'An error occurred')
-        setCallStatus(prev => ({ 
-          ...prev, 
-          isActive: false, 
-          isConnected: false, 
-          status: 'error' 
-        }))
+        setCallStatus('Error: ' + error.message)
+        addMessage('system', `Error: ${error.message}`, 'system')
+        logInteraction('error', `Error: ${error.message}`)
       })
 
-      setVapi(vapiInstance)
-      isInitialized.current = true
       console.log('✅ Vapi initialized successfully')
+      setCallStatus('Ready')
+      
     } catch (error) {
-      console.error('Failed to initialize Vapi:', error)
-      setError((error as Error).message)
+      console.error('❌ Failed to initialize Vapi:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      setVapiError(errorMessage)
+      setCallStatus('Initialization Failed')
     }
-  }, [fetchPublicKey, onCallStart, onCallEnd, onTranscript, publicKey, vapi])
+  }
 
-  // Start call
-  const startCall = useCallback(async () => {
-    if (!vapi) {
-      setError('Vapi not initialized')
+  const logInteraction = async (type: string, content: string) => {
+    if (!user || !selectedAgent) return
+    
+    try {
+      await fetch(`http://localhost:8000/users/${user.id}/interactions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          voice_agent_id: selectedAgent.id,
+          interaction_type: type,
+          content: content
+        }),
+      })
+    } catch (error) {
+      console.error('Failed to log interaction:', error)
+    }
+  }
+
+  const startCall = async () => {
+    if (!vapiRef.current || !selectedAgent) {
+      console.error('❌ Vapi not initialized or no agent selected')
       return
     }
 
-    setIsLoading(true)
-    setError(null)
-    setTranscript([])
-    
     try {
-      setCallStatus(prev => ({ ...prev, status: 'connecting' }))
+      setCallStatus('Starting Call...')
       
-      // Get current assistant ID (either provided or fetch dynamic one)
-      const activeAssistantId = currentAssistantId || await fetchCurrentAssistantId()
-      if (!activeAssistantId) {
-        throw new Error('No assistant ID available')
-      }
+      await vapiRef.current.start(selectedAgent.vapi_assistant_id)
       
-      // Start the call with assistant ID
-      await vapi.start(activeAssistantId)
+      console.log('📞 Call started with agent:', selectedAgent.name)
       
-      console.log('📞 Starting call with dynamic assistant:', activeAssistantId)
     } catch (error) {
-      console.error('Failed to start call:', error)
-      setError((error as Error).message)
-      setIsLoading(false)
-      setCallStatus(prev => ({ ...prev, status: 'error' }))
+      console.error('❌ Failed to start call:', error)
+      setCallStatus('Failed to Start Call')
+      addMessage('system', `Failed to start call: ${error}`, 'system')
     }
-  }, [vapi, currentAssistantId, fetchCurrentAssistantId])
-
-  // Stop call
-  const stopCall = useCallback(() => {
-    if (!vapi) return
-
-    try {
-      vapi.stop()
-      setIsLoading(false)
-      console.log('📞 Call stopped')
-    } catch (error) {
-      console.error('Failed to stop call:', error)
-      setError((error as Error).message)
-    }
-  }, [vapi])
-
-  // Toggle mute
-  const toggleMute = useCallback(() => {
-    if (!vapi) return
-
-    try {
-      const newMuteState = !callStatus.isMuted
-      vapi.setMuted(newMuteState)
-      setCallStatus(prev => ({ ...prev, isMuted: newMuteState }))
-      console.log(`🔇 ${newMuteState ? 'Muted' : 'Unmuted'}`)
-    } catch (error) {
-      console.error('Failed to toggle mute:', error)
-      setError((error as Error).message)
-    }
-  }, [vapi, callStatus.isMuted])
-
-  // Duration timer
-  useEffect(() => {
-    let interval: NodeJS.Timeout | null = null
-    
-    if (callStatus.isActive) {
-      interval = setInterval(() => {
-        setCallStatus(prev => ({ ...prev, duration: prev.duration + 1 }))
-      }, 1000)
-    } else {
-      setCallStatus(prev => ({ ...prev, duration: 0 }))
-    }
-
-    return () => {
-      if (interval) clearInterval(interval)
-    }
-  }, [callStatus.isActive])
-
-  // Initialize on mount - only once
-  useEffect(() => {
-    if (!isInitialized.current) {
-      initializeVapi()
-    }
-  }, []) // Empty dependency array to run only once
-
-  // Format duration
-  const formatDuration = (seconds: number) => {
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-    return `${mins}:${secs.toString().padStart(2, '0')}`
   }
 
-  // Get status color
+  const endCall = () => {
+    if (vapiRef.current && isCallActive) {
+      vapiRef.current.stop()
+      console.log('📞 Call ended by user')
+    }
+  }
+
+  const toggleMute = () => {
+    if (vapiRef.current) {
+      const newMutedState = !isMuted
+      vapiRef.current.setMuted(newMutedState)
+      setIsMuted(newMutedState)
+      addMessage('system', newMutedState ? 'Microphone muted' : 'Microphone unmuted', 'system')
+    }
+  }
+
   const getStatusColor = () => {
-    switch (callStatus.status) {
-      case 'active': return 'text-green-400'
-      case 'connecting': return 'text-yellow-400'
-      case 'error': return 'text-red-400'
-      case 'ended': return 'text-gray-400'
-      default: return 'text-gray-400'
+    if (isCallActive) return 'text-green-400'
+    if (callStatus.includes('Error') || callStatus.includes('Failed')) return 'text-red-400'
+    if (callStatus === 'Ready') return 'text-blue-400'
+    return 'text-yellow-400'
+  }
+
+  const getAgentTypeIcon = (type: string) => {
+    switch (type) {
+      case 'research': return '🔬'
+      case 'workflow': return '🔧'
+      case 'custom': return '⚙️'
+      default: return '🤖'
     }
   }
 
-  // Get volume indicator
-  const getVolumeIndicator = () => {
-    if (volumeLevel === 0) return '🔇'
-    if (volumeLevel < 0.3) return '🔈'
-    if (volumeLevel < 0.7) return '🔉'
-    return '🔊'
+  const getMessageIcon = (message: Message) => {
+    if (message.type === 'system') return '🔔'
+    if (message.type === 'function-call') return '🔧'
+    if (message.role === 'user') return '👤'
+    if (message.role === 'assistant') return '🤖'
+    return '💬'
+  }
+
+  const getMessageColor = (message: Message) => {
+    if (message.type === 'system') return 'text-gray-400'
+    if (message.type === 'function-call') return 'text-yellow-400'
+    if (message.role === 'user') return 'text-blue-400'
+    if (message.role === 'assistant') return 'text-green-400'
+    return 'text-white'
+  }
+
+  if (isLoading) {
+    return (
+      <div className="text-center py-8">
+        <div className="text-yellow-400 mb-2">⏳ Loading voice agents...</div>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return (
+      <div className="text-center py-8">
+        <div className="text-red-400 mb-2">❌ Please log in to use voice agents</div>
+      </div>
+    )
+  }
+
+  if (vapiError) {
+    return (
+      <div className="text-center py-8">
+        <div className="text-6xl mb-4">⚠️</div>
+        <h3 className="text-xl font-semibold mb-2 text-red-400">VAPI Configuration Error</h3>
+        <p className="text-gray-400 mb-6 max-w-md mx-auto">{vapiError}</p>
+        <div className="space-y-3">
+          <button
+            onClick={() => window.location.href = '/login'}
+            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors block mx-auto"
+          >
+            🔑 Update VAPI Keys
+          </button>
+          <button
+            onClick={() => {
+              setVapiError(null)
+              initializeVapi()
+            }}
+            className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors block mx-auto"
+          >
+            🔄 Retry Initialization
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (voiceAgents.length === 0) {
+    return (
+      <div className="text-center py-8">
+        <div className="text-6xl mb-4">🤖</div>
+        <h3 className="text-xl font-semibold mb-2">No Voice Agents</h3>
+        <p className="text-gray-400 mb-4">Create your first voice agent to start voice conversations</p>
+        <button
+          onClick={() => window.location.href = '/voice-agents'}
+          className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors"
+        >
+          ➕ Create Voice Agent
+        </button>
+      </div>
+    )
   }
 
   return (
-    <div className="bg-white/10 backdrop-blur rounded-lg p-6 border border-white/20">
-      <div className="flex items-center justify-between mb-6">
-        <h3 className="text-xl font-semibold flex items-center gap-2">
-          📞 Voice Assistant Call
-        </h3>
-        <div className={`text-sm font-medium ${getStatusColor()}`}>
-          {callStatus.status.charAt(0).toUpperCase() + callStatus.status.slice(1)}
-          {callStatus.isActive && ` • ${formatDuration(callStatus.duration)}`}
-        </div>
-      </div>
-
-      {error && (
-        <div className="mb-4 p-3 bg-red-500/20 border border-red-500/30 rounded-lg text-red-300 text-sm">
-          ❌ {error}
-        </div>
-      )}
-
-      {/* Call Controls */}
-      <div className="flex flex-wrap gap-3 mb-6">
-        {!callStatus.isActive ? (
-          <button
-            onClick={startCall}
-            disabled={isLoading || !vapi}
-            className="bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:opacity-50 px-6 py-3 rounded-lg font-medium transition-colors flex items-center gap-2"
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
+      {/* Left Panel - Controls */}
+      <div className="space-y-6">
+        {/* Agent Selection */}
+        <div>
+          <label className="block text-sm font-medium mb-2">Select Voice Agent</label>
+          <select
+            value={selectedAgent?.id || ''}
+            onChange={(e) => {
+              const agent = voiceAgents.find(a => a.id === parseInt(e.target.value))
+              setSelectedAgent(agent || null)
+            }}
+            className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
-            {isLoading ? (
-              <>
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                Connecting...
-              </>
+            {voiceAgents.map((agent) => (
+              <option key={agent.id} value={agent.id} className="bg-gray-800">
+                {getAgentTypeIcon(agent.agent_type)} {agent.name} ({agent.agent_type})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Selected Agent Info */}
+        {selectedAgent && (
+          <div className="bg-white/5 rounded-lg p-4 border border-white/10">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-2xl">{getAgentTypeIcon(selectedAgent.agent_type)}</span>
+              <h3 className="font-semibold">{selectedAgent.name}</h3>
+              <span className="px-2 py-1 bg-blue-600 text-xs rounded text-white">
+                {selectedAgent.agent_type.toUpperCase()}
+              </span>
+            </div>
+            <p className="text-sm text-gray-400">
+              Assistant ID: {selectedAgent.vapi_assistant_id.slice(0, 8)}...
+            </p>
+          </div>
+        )}
+
+        {/* Call Controls */}
+        <div className="text-center space-y-4">
+          <div className={`text-lg font-medium ${getStatusColor()}`}>
+            Status: {callStatus}
+          </div>
+          
+          <div className="flex justify-center gap-4">
+            {!isCallActive ? (
+              <button
+                onClick={startCall}
+                disabled={!selectedAgent || callStatus.includes('Failed')}
+                className="px-8 py-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white rounded-lg font-semibold text-lg transition-colors flex items-center gap-2"
+              >
+                📞 Start Call
+              </button>
             ) : (
               <>
-                📞 Start Voice Call
+                <button
+                  onClick={toggleMute}
+                  className={`px-6 py-3 ${isMuted ? 'bg-red-600 hover:bg-red-700' : 'bg-yellow-600 hover:bg-yellow-700'} text-white rounded-lg font-semibold transition-colors flex items-center gap-2`}
+                >
+                  {isMuted ? '🔇 Unmute' : '🎤 Mute'}
+                </button>
+                <button
+                  onClick={endCall}
+                  className="px-8 py-4 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold text-lg transition-colors flex items-center gap-2"
+                >
+                  📞 End Call
+                </button>
               </>
             )}
-          </button>
-        ) : (
-          <>
-            <button
-              onClick={stopCall}
-              className="bg-red-600 hover:bg-red-700 px-6 py-3 rounded-lg font-medium transition-colors flex items-center gap-2"
-            >
-              📞❌ End Call
-            </button>
-            <button
-              onClick={toggleMute}
-              className={`${
-                callStatus.isMuted 
-                  ? 'bg-yellow-600 hover:bg-yellow-700' 
-                  : 'bg-blue-600 hover:bg-blue-700'
-              } px-4 py-3 rounded-lg font-medium transition-colors flex items-center gap-2`}
-            >
-              {callStatus.isMuted ? '🔇 Unmute' : '🎤 Mute'}
-            </button>
-          </>
-        )}
+          </div>
+
+          {/* Instructions */}
+          <div className="text-sm text-gray-400 max-w-md mx-auto">
+            {!isCallActive ? (
+              <p>Select a voice agent and click "Start Call" to begin your conversation. Make sure your microphone is enabled.</p>
+            ) : (
+              <p>Speak naturally. The AI will respond through your speakers. Use the mute button to pause your microphone.</p>
+            )}
+          </div>
+        </div>
+
+        {/* User Info */}
+        <div className="text-center text-xs text-gray-500">
+          Logged in as: {user.username} | {voiceAgents.length} voice agent{voiceAgents.length !== 1 ? 's' : ''} available
+        </div>
       </div>
 
-      {/* Volume Level Indicator */}
-      {callStatus.isActive && (
-        <div className="mb-4 p-3 bg-white/5 rounded-lg">
-          <div className="flex items-center gap-2 text-sm">
-            <span>{getVolumeIndicator()}</span>
-            <span className="text-gray-400">Volume:</span>
-            <div className="flex-1 bg-gray-700 rounded-full h-2">
-              <div 
-                className="bg-green-500 h-2 rounded-full transition-all duration-100"
-                style={{ width: `${volumeLevel * 100}%` }}
-              ></div>
-            </div>
-            <span className="text-sm">{Math.round(volumeLevel * 100)}%</span>
-          </div>
+      {/* Right Panel - Live Transcript */}
+      <div className="bg-white/5 rounded-lg border border-white/10 flex flex-col h-[600px]">
+        <div className="p-4 border-b border-white/10">
+          <h3 className="text-lg font-semibold flex items-center gap-2">
+            💬 Live Conversation
+            {isCallActive && <span className="text-green-400 text-sm">(Live)</span>}
+          </h3>
         </div>
-      )}
-
-      {/* Live Transcript */}
-      {transcript.length > 0 && (
-        <div className="mt-6">
-          <h4 className="text-lg font-semibold mb-3 flex items-center gap-2">
-            📝 Live Transcript
-          </h4>
-          <div className="max-h-64 overflow-y-auto bg-black/20 rounded-lg p-4 space-y-2">
-            {transcript.map((entry, index) => (
-              <div key={index} className="text-sm">
-                <span className={`font-medium ${
-                  entry.role === 'user' ? 'text-blue-400' : 'text-green-400'
-                }`}>
-                  {entry.role === 'user' ? '👤 You' : '🤖 Assistant'}:
-                </span>
-                <span className="ml-2 text-gray-200">{entry.content}</span>
-                <div className="text-xs text-gray-500 ml-2">
-                  {entry.timestamp.toLocaleTimeString()}
+        
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {messages.length === 0 ? (
+            <div className="text-center text-gray-400 py-8">
+              <div className="text-4xl mb-2">🎤</div>
+              <p>Start a call to see live transcripts and interactions</p>
+            </div>
+          ) : (
+            messages.map((message) => (
+              <div key={message.id} className="flex gap-3">
+                <span className="text-lg mt-1">{getMessageIcon(message)}</span>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className={`font-medium ${getMessageColor(message)}`}>
+                      {message.role === 'user' ? 'You' : 
+                       message.role === 'assistant' ? 'Assistant' : 
+                       'System'}
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      {message.timestamp.toLocaleTimeString()}
+                    </span>
+                  </div>
+                  <p className={`text-sm ${getMessageColor(message)}`}>
+                    {message.content}
+                  </p>
                 </div>
               </div>
-            ))}
-          </div>
+            ))
+          )}
+          
+          {/* Live transcript indicator */}
+          {currentTranscript && (
+            <div className="flex gap-3 opacity-70">
+              <span className="text-lg mt-1">👤</span>
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-medium text-blue-400">You</span>
+                  <span className="text-xs text-gray-500">speaking...</span>
+                  <div className="flex space-x-1">
+                    <div className="w-1 h-1 bg-blue-400 rounded-full animate-pulse"></div>
+                    <div className="w-1 h-1 bg-blue-400 rounded-full animate-pulse delay-75"></div>
+                    <div className="w-1 h-1 bg-blue-400 rounded-full animate-pulse delay-150"></div>
+                  </div>
+                </div>
+                <p className="text-sm text-blue-400 italic">
+                  {currentTranscript}
+                </p>
+              </div>
+            </div>
+          )}
+          
+          <div ref={messagesEndRef} />
         </div>
-      )}
-
-      {/* Instructions */}
-      {!callStatus.isActive && !error && (
-        <div className="text-sm text-gray-400 bg-white/5 rounded-lg p-4">
-          <h4 className="font-medium mb-2">💡 How to use:</h4>
-          <ul className="list-disc list-inside space-y-1">
-            <li>Click "Start Voice Call" to begin speaking with your configured AI assistant</li>
-            <li>The assistant will be created dynamically based on your current YAML configuration</li>
-            <li>For LangGraph Research Assistant, try: "What is artificial intelligence?" or "Research Tesla's latest news"</li>
-            <li>For Tesseract Workflow, try: "I need a financial analysis of Apple for credit risk"</li>
-            <li>Use the mute button to control your microphone during the call</li>
-          </ul>
-        </div>
-      )}
+      </div>
     </div>
   )
 }

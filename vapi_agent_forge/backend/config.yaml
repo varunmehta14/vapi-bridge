@@ -1,67 +1,105 @@
 assistant:
-  name: "Tesseract Command Assistant"
+  name: "LangGraph Research Assistant"
   model:
     provider: "openai"
     model: "gpt-4o-mini"
-    system_prompt_template: >
-      You are a specialized AI assistant for the Tesseract system. Your goal is to accurately trigger the correct tool based on the user's request.
+    messages:
+      - role: "system"
+        content: >
+          You are a specialized AI assistant for the LangGraph research system. Your goal is to accurately trigger the correct tool based on the user's request.
 
-      CRITICAL RULES:
-      1. If the user's request clearly matches a specific workflow tool like 'triggerFinancialAnalysisWorkflow', ask for any missing parameters and then call that tool.
-      2. For ALL OTHER requests, including simple questions, greetings, or ambiguous commands, you MUST use the 'processGeneralRequest' tool. Do not try to answer yourself.
-      3. The user's ID is {user_id}.
+          CRITICAL RULES:
+          1. If the user requests research on a specific topic, use 'langgraph_quick_research' for fast results.
+          2. If the user wants content generated or written, use 'langgraph_generate' with appropriate parameters.
+          3. For ALL OTHER requests, including simple questions, greetings, or ambiguous commands, you MUST use the 'langgraph_chat' tool. Do not try to answer yourself.
+          4. The user's ID is {user_id}.
 
-      Example 1: User says "I need a financial analysis of Tesla". You should ask clarifying questions for 'analysis_type', then call 'triggerFinancialAnalysisWorkflow'.
-      Example 2: User says "What's the weather?" or "Hello there". You MUST call 'processGeneralRequest'.
-  voice: 
+          Example 1: User says "Research artificial intelligence". You should call 'langgraph_quick_research'.
+          Example 2: User says "Write a summary about Tesla". You should call 'langgraph_generate'.
+          Example 3: User says "What's the weather?" or "Hello there". You MUST call 'langgraph_chat'.
+
+  voice:
     provider: "playht"
     voiceId: "jennifer-playht"
-  firstMessage: "Tesseract system online. How can I assist you?"
+  
+  firstMessage: "LangGraph research system online. How can I assist you with research or content generation?"
 
 tools:
-  # TOOL 1: For specific, known workflows
-  - name: "triggerFinancialAnalysisWorkflow"
-    description: "Use this specific tool to run a multi-step financial analysis on a company. Requires the company name and the type of analysis."
+  - name: "langgraph_quick_research"
+    description: "Use this specific tool to run quick research on any topic. Provides fast, reliable research results."
     parameters:
       type: "object"
       properties:
-        user_id:
+        query:
           type: "string"
-          description: "The user's unique ID."
-        company_name:
-          type: "string"
-          description: "The name of the company to analyze, e.g., 'Tesla Inc'."
-        analysis_type:
-          type: "string"
-          description: "The type of analysis to run, e.g., 'credit_risk', 'standard_review'."
-      required: ["user_id", "company_name", "analysis_type"]
+          description: "The research query or question, e.g., 'artificial intelligence trends'."
+      required: ["query"]
     action:
       type: "api_call"
       method: "POST"
-      url: "http://localhost:8081/run_workflow/financial_analysis/{user_id}"
+      url: "https://d6c5-2603-8000-baf0-4690-4c7d-38bd-11e8-5920.ngrok-free.app/quick-research"
       json_body:
-        input_params:
-          company_name: "{company_name}"
-          analysis_type: "{analysis_type}"
-      response_template: "Workflow initiated. The Job ID is {job_id}."
+        query: "{query}"
+        research_type: "quick"
+        max_sources: 2
+        include_summary: true
+      response_template: "🔍 Research completed: {summary}"
 
-  # TOOL 2: The general-purpose fallback
-  - name: "processGeneralRequest"
-    description: "A general-purpose tool for all other requests, simple questions, or ambiguous commands that do not fit a specific workflow."
+  - name: "langgraph_generate"
+    description: "Use this tool to generate content like articles, summaries, or reports on specific topics."
     parameters:
       type: "object"
       properties:
-        user_id:
+        topic:
           type: "string"
-          description: "The user's unique ID."
-        user_input:
+          description: "The topic for content generation, e.g., 'Tesla financial performance'."
+        content_type:
+          type: "string"
+          description: "The type of content to generate."
+          enum: ["article", "blog", "summary", "report"]
+          default: "summary"
+        tone:
+          type: "string"
+          description: "The tone of the content."
+          enum: ["professional", "casual", "academic", "creative"]
+          default: "professional"
+        length:
+          type: "string"
+          description: "The length of the content."
+          enum: ["short", "medium", "long"]
+          default: "short"
+      required: ["topic"]
+    action:
+      type: "api_call"
+      method: "POST"
+      url: "https://d6c5-2603-8000-baf0-4690-4c7d-38bd-11e8-5920.ngrok-free.app/generate-content"
+      json_body:
+        topic: "{topic}"
+        content_type: "{content_type}"
+        tone: "{tone}"
+        length: "{length}"
+      response_template: "✍️ Content generated: {content}"
+
+  - name: "langgraph_chat"
+    description: "A general-purpose tool for all other requests, simple questions, greetings, or ambiguous commands that do not fit specific research or content generation."
+    parameters:
+      type: "object"
+      properties:
+        message:
           type: "string"
           description: "The user's full, verbatim request."
-      required: ["user_id", "user_input"]
+        context:
+          type: "string"
+          description: "Optional context for the conversation."
+          default: ""
+      required: ["message"]
     action:
       type: "api_call"
       method: "POST"
-      url: "http://localhost:8081/receive_user_input/{user_id}"
+      url: "https://d6c5-2603-8000-baf0-4690-4c7d-38bd-11e8-5920.ngrok-free.app/vapi-webhook"
       json_body:
-        user_input: "{user_input}"
-      response_path: "response" 
+        message:
+          content: "{message}"
+          context: "{context}"
+        call: null
+      response_template: "💬 {response}"

@@ -1,0 +1,118 @@
+# LangGraph Forge Test Voice Agent Configuration
+assistant:
+  name: "LangGraph Research Assistant"
+  model:
+    provider: "openai"
+    model: "gpt-4o-mini"
+    system_prompt_template: |
+      You are a LangGraph Research Assistant that helps users with research and content generation.
+      
+      **IMPORTANT INSTRUCTIONS:**
+      - When users ask research questions, use the 'quick_research' tool
+      - When users want content generated, use the 'quick_content' tool
+      - When users want to check job status, use the 'get_job_status' tool
+      - Always be conversational and explain what you're doing
+      
+      **Example interactions:**
+      - "Research artificial intelligence" → Use quick_research tool
+      - "Write a summary about climate change" → Use quick_content tool
+      - "What's the status of job abc123?" → Use get_job_status tool
+      
+      Be helpful and always use the appropriate tool for the user's request.
+      
+  voice: 
+    provider: "playht"
+    voiceId: "jennifer-playht"
+  
+  firstMessage: "Hello! I'm your LangGraph Research Assistant. I can help you research topics, generate content, and check job statuses. What would you like me to help you with?"
+
+tools:
+  # Quick Research Tool - for immediate research responses
+  - name: "quick_research"
+    description: "Research a topic quickly and provide comprehensive information with sources"
+    parameters:
+      type: "object"
+      properties:
+        query:
+          type: "string"
+          description: "The research query or question to investigate"
+        research_type:
+          type: "string"
+          description: "Type of research: comprehensive, quick, or deep"
+          default: "quick"
+        max_sources:
+          type: "integer"
+          description: "Maximum number of sources to research (1-10)"
+          default: 3
+      required: ["query"]
+    action:
+      method: "POST"
+      url: "http://localhost:8082/quick-research"
+      json_body:
+        query: "{query}"
+        research_type: "{research_type}"
+        max_sources: "{max_sources}"
+      response_template: "Research Results for '{query}': {summary}"
+
+  # Quick Content Generation Tool
+  - name: "quick_content"
+    description: "Generate content on a specific topic with customizable style and length"
+    parameters:
+      type: "object"
+      properties:
+        topic:
+          type: "string"
+          description: "The topic for content generation"
+        content_type:
+          type: "string"
+          description: "Type of content: article, blog, summary, or report"
+          default: "summary"
+        tone:
+          type: "string"
+          description: "Writing tone: professional, casual, academic, or creative"
+          default: "professional"
+        length:
+          type: "string"
+          description: "Content length: short, medium, or long"
+          default: "medium"
+      required: ["topic"]
+    action:
+      method: "POST"
+      url: "http://localhost:8082/quick-content"
+      json_body:
+        topic: "{topic}"
+        content_type: "{content_type}"
+        tone: "{tone}"
+        length: "{length}"
+      response_template: "Generated {content_type} about '{topic}': {content}"
+
+  # Job Status Checker Tool
+  - name: "get_job_status"
+    description: "Check the status of a research or content generation job by job ID"
+    parameters:
+      type: "object"
+      properties:
+        job_id:
+          type: "string"
+          description: "The unique job ID to check status for"
+      required: ["job_id"]
+    action:
+      method: "GET"
+      url: "http://localhost:8082/job-status/{job_id}"
+      response_template: "Job {job_id} Status: {status}. Created: {created_at}. Type: {request_type}."
+
+  # List Recent Jobs Tool
+  - name: "list_recent_jobs"
+    description: "List recent research and content generation jobs"
+    parameters:
+      type: "object"
+      properties:
+        limit:
+          type: "integer"
+          description: "Number of jobs to retrieve (1-50)"
+          default: 5
+      required: []
+    action:
+      method: "GET"
+      url: "http://localhost:8082/jobs?limit={limit}"
+      response_template: "Recent jobs retrieved successfully. Found {total} jobs." 

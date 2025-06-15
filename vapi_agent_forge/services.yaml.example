@@ -1,0 +1,88 @@
+# Service Registry Configuration
+# Companies can customize these URLs for their deployment environment
+# This file enables flexible service discovery without hardcoded localhost URLs
+
+services:
+  # Research and Content Services
+  research:
+    url: "https://research-api.yourcompany.com"
+    health_path: "/health"
+    timeout: 15
+    required: true
+  
+  content:
+    url: "https://content-gen.yourcompany.com"
+    health_path: "/health"
+    timeout: 20
+    required: true
+  
+  # Workflow and Automation Services
+  workflow:
+    url: "https://workflow-engine.yourcompany.com"
+    health_path: "/status"
+    timeout: 10
+    required: true
+  
+  tesseract:
+    url: "https://tesseract-api.yourcompany.com"
+    health_path: "/"
+    timeout: 10
+    required: true
+  
+  # LangGraph Service
+  langgraph:
+    url: "https://langgraph.yourcompany.com"
+    health_path: "/health"
+    timeout: 15
+    required: true
+  
+  # Backend Services
+  backend:
+    url: "http://localhost:8000"  # Usually localhost for internal communication
+    health_path: "/health"
+    timeout: 5
+    required: true
+  
+  public_backend:
+    url: "https://vapi-backend.yourcompany.com"  # Public URL for Vapi webhooks
+    health_path: "/health"
+    timeout: 10
+    required: true
+
+# Alternative: Use Environment Variables
+# Set these environment variables instead of using this file:
+# 
+# export RESEARCH_SERVICE_URL="https://research-api.yourcompany.com"
+# export CONTENT_SERVICE_URL="https://content-gen.yourcompany.com"
+# export WORKFLOW_SERVICE_URL="https://workflow-engine.yourcompany.com"
+# export TESSERACT_SERVICE_URL="https://tesseract-api.yourcompany.com"
+# export LANGGRAPH_SERVICE_URL="https://langgraph.yourcompany.com"
+# export PUBLIC_SERVER_URL="https://vapi-backend.yourcompany.com"
+#
+# Environment variables take precedence over this file
+
+# Deployment Examples:
+#
+# 1. Local Development:
+#    All services use localhost URLs (default behavior)
+#
+# 2. Docker Compose:
+#    services:
+#      research:
+#        url: "http://research-service:8082"
+#      workflow:
+#        url: "http://tesseract-service:8081"
+#
+# 3. Kubernetes:
+#    services:
+#      research:
+#        url: "http://research-service.default.svc.cluster.local:8082"
+#      workflow:
+#        url: "http://workflow-service.default.svc.cluster.local:8081"
+#
+# 4. Cloud Deployment:
+#    services:
+#      research:
+#        url: "https://research-api.company.com"
+#      workflow:
+#        url: "https://workflow-api.company.com" 

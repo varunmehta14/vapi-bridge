@@ -1,0 +1,74 @@
+assistant:
+  name: "Research Assistant"
+  model:
+    provider: "openai"
+    model: "gpt-4"
+    system_prompt_template: |
+      You are a helpful research assistant. You can help users research topics, find information, and generate content.
+      When users ask for research, use the available tools to gather information and provide comprehensive answers.
+      Always be accurate and cite your sources when possible.
+  voice:
+    provider: "playht"
+    voiceId: "jennifer"
+  firstMessage: "Hi! I'm your research assistant. I can help you research any topic or generate content. What would you like to explore today?"
+
+tools:
+  - name: "research_topic"
+    description: "Research a specific topic and provide comprehensive information"
+    parameters:
+      type: "object"
+      properties:
+        topic:
+          type: "string"
+          description: "The topic to research"
+        depth:
+          type: "string"
+          enum: ["basic", "detailed", "comprehensive"]
+          description: "How detailed the research should be"
+      required: ["topic"]
+    action:
+      method: "POST"
+      url: "http://localhost:8082/research"
+      json_body:
+        topic: "{topic}"
+        depth: "{depth}"
+      response_format: |
+        Research Results for {topic}:
+        
+        {response.summary}
+        
+        Key Points:
+        {response.key_points}
+        
+        Sources: {response.sources}
+
+  - name: "generate_content"
+    description: "Generate content based on research or user requirements"
+    parameters:
+      type: "object"
+      properties:
+        content_type:
+          type: "string"
+          enum: ["article", "summary", "report", "blog_post"]
+          description: "Type of content to generate"
+        topic:
+          type: "string"
+          description: "Topic for the content"
+        length:
+          type: "string"
+          enum: ["short", "medium", "long"]
+          description: "Desired length of content"
+      required: ["content_type", "topic"]
+    action:
+      method: "POST"
+      url: "http://localhost:8082/generate"
+      json_body:
+        type: "{content_type}"
+        topic: "{topic}"
+        length: "{length}"
+      response_format: |
+        Generated {content_type} on {topic}:
+        
+        {response.content}
+        
+        Word count: {response.word_count} 

@@ -1,0 +1,112 @@
+name: "Research Assistant"
+model:
+  provider: openai
+  model: gpt-4
+  temperature: 0.7
+  max_tokens: 1000
+
+voice:
+  provider: 11labs
+  voiceId: "21m00Tcm4TlvDq8ikWAM"
+
+firstMessage: "Hello! I'm your research assistant powered by LangGraph Forge. I can help you with complex research workflows, data analysis, and multi-step reasoning tasks. What would you like to research today?"
+
+tools:
+  - name: "research_query"
+    description: "Execute a research query using LangGraph Forge workflows"
+    url: "service://langgraph_forge/research"
+    method: "POST"
+    headers:
+      Content-Type: "application/json"
+    body:
+      query: "{{query}}"
+      workflow_type: "{{workflow_type}}"
+      max_steps: "{{max_steps}}"
+    parameters:
+      - name: query
+        type: string
+        description: "The research question or topic to investigate"
+        required: true
+      - name: workflow_type
+        type: string
+        description: "Type of research workflow (analysis, synthesis, exploration)"
+        required: false
+        default: "analysis"
+      - name: max_steps
+        type: integer
+        description: "Maximum number of reasoning steps"
+        required: false
+        default: 5
+    response_format: |
+      Research Results:
+      {{response.findings}}
+      
+      Confidence: {{response.confidence}}%
+      Sources: {{response.sources}}
+
+  - name: "data_analysis"
+    description: "Perform data analysis using LangGraph Forge"
+    url: "service://langgraph_forge/analyze"
+    method: "POST"
+    headers:
+      Content-Type: "application/json"
+    body:
+      data: "{{data}}"
+      analysis_type: "{{analysis_type}}"
+      parameters: "{{parameters}}"
+    parameters:
+      - name: data
+        type: string
+        description: "Data to analyze (JSON, CSV, or description)"
+        required: true
+      - name: analysis_type
+        type: string
+        description: "Type of analysis (statistical, trend, correlation)"
+        required: false
+        default: "statistical"
+      - name: parameters
+        type: object
+        description: "Additional analysis parameters"
+        required: false
+    response_format: |
+      Analysis Results:
+      {{response.summary}}
+      
+      Key Insights:
+      {{response.insights}}
+      
+      Recommendations:
+      {{response.recommendations}}
+
+  - name: "workflow_status"
+    description: "Check the status of a running LangGraph workflow"
+    url: "service://langgraph_forge/status/{{workflow_id}}"
+    method: "GET"
+    parameters:
+      - name: workflow_id
+        type: string
+        description: "ID of the workflow to check"
+        required: true
+    response_format: |
+      Workflow Status: {{response.status}}
+      Progress: {{response.progress}}%
+      Current Step: {{response.current_step}}
+
+systemMessage: |
+  You are a research assistant powered by LangGraph Forge, a sophisticated workflow engine for complex reasoning tasks.
+  
+  Your capabilities include:
+  - Multi-step research workflows
+  - Data analysis and synthesis
+  - Complex reasoning chains
+  - Workflow orchestration
+  
+  When users ask research questions:
+  1. Use the research_query tool for general research tasks
+  2. Use data_analysis for specific data-related questions
+  3. Use workflow_status to check on long-running processes
+  
+  Always explain your reasoning process and cite sources when available.
+  Be thorough but concise in your responses.
+
+endCallMessage: "Thank you for using the Research Assistant. Your research session has been completed." 

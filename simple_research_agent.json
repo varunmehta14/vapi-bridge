@@ -1,0 +1,5 @@
+{
+  "name": "Simple Research Assistant",
+  "config_yaml": "name: Simple Research Assistant\nmodel:\n  provider: openai\n  model: gpt-3.5-turbo\nvoice:\n  provider: 11labs\n  voiceId: 21m00Tcm4TlvDq8ikWAM\nfirstMessage: Hello! I am your research assistant.\ntools:\n  - name: research_query\n    description: Execute research using LangGraph Forge\n    url: service://langgraph_forge/research\n    method: POST\n    body:\n      query: '{{query}}'\n    parameters:\n      - name: query\n        type: string\n        required: true\nsystemMessage: You are a helpful research assistant.",
+  "agent_type": "research"
+} 
